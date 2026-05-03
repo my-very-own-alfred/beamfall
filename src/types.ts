@@ -128,7 +128,14 @@ export interface Player {
   stats: PlayerStats;
 }
 
-export type LaserPattern = 'sweep' | 'rotate' | 'pulse' | 'segment-flip';
+export type LaserPattern =
+  | 'sweep'
+  | 'rotate'
+  | 'pulse'
+  | 'segment-flip'
+  | 'zigzag'
+  | 'ring'
+  | 'pendulum';
 
 export interface LaserNode {
   id: EntityId;
@@ -168,6 +175,10 @@ export interface Arena {
   cellSize: number; // pixels per cell at 1x zoom
   nodes: Array<{ pos: Vec2; pattern?: LaserPattern }>;
   spawnPoints: Vec2[]; // player spawn positions per slot
+  /** Optional human-readable name displayed in the lobby. */
+  name?: string;
+  /** Optional one-line tagline displayed below the name. */
+  tagline?: string;
 }
 
 export interface World {

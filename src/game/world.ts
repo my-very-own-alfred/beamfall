@@ -11,7 +11,8 @@ import type {
 } from '@/types';
 import { ROUND_DURATION_SEC } from '@/types';
 
-import { createGrid8x6 } from '@/game/arenas/grid8x6';
+import { ARENAS, DEFAULT_ARENA_ID } from '@/game/arenas';
+import type { ArenaId } from '@/game/arenas';
 import { createNode } from '@/game/entities/node';
 import { createPlayer } from '@/game/entities/player';
 import { makeRng } from '@/game/rng';
@@ -50,8 +51,10 @@ export function createWorld(
   bindings: PlayerBinding[],
   characters: CharacterClass[] = [],
   seed?: number,
+  arenaId: ArenaId = DEFAULT_ARENA_ID,
 ): World {
-  const arena = createGrid8x6();
+  const arenaFactory = ARENAS[arenaId] ?? ARENAS[DEFAULT_ARENA_ID];
+  const arena = arenaFactory();
   const actualSeed = seed ?? Date.now();
   const rng = makeRng(actualSeed);
 

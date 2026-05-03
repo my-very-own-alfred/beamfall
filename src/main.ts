@@ -125,7 +125,7 @@ async function main(): Promise<void> {
             lobby.destroy();
             lobby = null;
 
-            const w = createWorld(bindings, characters);
+            const w = createWorld(bindings, characters, undefined, lobby.arenaId());
             startNewMatch(w);
             world = w;
 

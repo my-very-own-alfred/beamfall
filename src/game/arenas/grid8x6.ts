@@ -6,6 +6,8 @@ import type { Arena } from '@/types';
 
 export function createGrid8x6(): Arena {
   return {
+    name: 'Grid',
+    tagline: 'The classic 8×6 starter. All four legacy patterns.',
     cols: 8,
     rows: 6,
     cellSize: 64,

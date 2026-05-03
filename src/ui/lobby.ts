@@ -15,6 +15,8 @@ import type {
 } from '@/types';
 import { COLOR_HEX } from '@/types';
 import { ALL_CHARACTERS, CHARACTER_SPECS, DEFAULT_CHARACTER } from '@/game/characters';
+import { ARENAS, ARENA_ORDER, DEFAULT_ARENA_ID } from '@/game/arenas';
+import type { ArenaId } from '@/game/arenas';
 
 export interface LobbyResult {
   bindings: PlayerBinding[];
@@ -25,6 +27,8 @@ export interface Lobby {
   update(viewportW: number, viewportH: number): void;
   bindings(): PlayerBinding[];
   characters(): CharacterClass[];
+  /** Currently-selected arena. Cycle with Tab. */
+  arenaId(): ArenaId;
   isReady(): boolean;
   destroy(): void;
 }
@@ -121,6 +125,22 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
     createSlotView(root, i as PlayerSlot, c),
   );
 
+  let arenaId: ArenaId = DEFAULT_ARENA_ID;
+
+  // Arena info text — added below subtitle. Updated whenever arena cycles.
+  const arenaInfo = new Text({
+    text: '',
+    style: { fontFamily: 'monospace', fontSize: 16, fill: 0xffd84d, align: 'center' },
+  });
+  arenaInfo.anchor.set(0.5, 0);
+  root.addChild(arenaInfo);
+
+  const refreshArenaInfo = (): void => {
+    const a = ARENAS[arenaId]();
+    arenaInfo.text = `Arena: ${a.name ?? arenaId} \u2014 ${a.tagline ?? ''}   [Tab to cycle]`;
+  };
+  refreshArenaInfo();
+
   const bindings: (PlayerBinding | null)[] = [null, null, null, null];
   const chars: CharacterClass[] = [
     DEFAULT_CHARACTER, DEFAULT_CHARACTER, DEFAULT_CHARACTER, DEFAULT_CHARACTER,
@@ -175,6 +195,13 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
       }
     }
 
+    // Arena cycle (Tab).
+    if (hooks.isKeyPressed('Tab')) {
+      const idx = ARENA_ORDER.indexOf(arenaId);
+      arenaId = ARENA_ORDER[(idx + 1) % ARENA_ORDER.length] ?? DEFAULT_ARENA_ID;
+      refreshArenaInfo();
+    }
+
     // Start trigger
     if (!ready && bindings.some((b) => b !== null)) {
       let startPressed = hooks.isKeyPressed('Enter');
@@ -195,6 +222,8 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
     title.y = 36;
     subtitle.x = viewportW / 2;
     subtitle.y = 88;
+    arenaInfo.x = viewportW / 2;
+    arenaInfo.y = 112;
 
     const gridW = SLOT_W * 2 + SLOT_GAP;
     const gridH = SLOT_H * 2 + SLOT_GAP;
@@ -222,6 +251,7 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
   return {
     update,
     bindings: () => bindings.filter((b): b is PlayerBinding => b !== null),
+    arenaId: () => arenaId,
     characters: () =>
       bindings
         .map((b, i) => (b !== null ? chars[i] ?? DEFAULT_CHARACTER : null))
