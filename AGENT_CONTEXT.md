@@ -1,0 +1,201 @@
+# Agent Handoff — Beamfall
+
+> Context for an AI agent picking up this repo cold. Read this before touching code.
+
+## What this is
+
+**Beamfall** — open-source local multiplayer arena game inspired by Laser League (delisted 2018). Hot-seat 1–4 players on one machine. Top-down 2D. TypeScript + PixiJS in a Tauri desktop shell.
+
+Status: **v0.2.0** — playable hot-seat with 6-class character system, power-ups, 4 laser patterns, and a Vitest test harness. Visuals still placeholder. See `README.md` for the genre spec; this file is the implementation hand-off.
+
+## Why these choices (load-bearing decisions)
+
+These are the decisions an agent is most likely to second-guess. Don't unless you have a real reason.
+
+1. **PixiJS, not a full engine.** Pixi is a thin WebGL renderer. Gameplay is plain TypeScript — unit-testable, no scene-graph framework lock-in. Phaser/Unity/Godot were rejected as overkill for a 2D arena.
+2. **120 Hz fixed-timestep sim, 60 Hz render with interpolation.** Lasers are thin and fast — at 60 Hz a player tunnels through them between frames. 120 Hz halves the tunneling risk for ~no CPU cost. Glenn Fiedler accumulator pattern in `src/engine/loop.ts`.
+3. **TypeScript-only gameplay, Rust is just the window.** Tauri shell (`src-tauri/`) does no gameplay work. One language, one debugger. Hot loops can move to Rust via `invoke` *if* perf demands it later — it doesn't yet.
+4. **Local-only. No netcode.** Hot-seat is the genuine fun mode. Rollback netcode is its own multi-month project, parked as v2.
+5. **Seeded PRNG (`src/game/rng.ts`).** Sim must be deterministic for replay/debug. Don't introduce `Math.random()` in gameplay code.
+6. **Strict TS, no `any` shortcuts.** `tsconfig.json` has strict mode on. `npm run typecheck` is the gate.
+
+## Repo layout (where to look)
+
+```
+src/
+├── main.ts              bootstrap, scene switching (menu → lobby → match)
+├── types.ts             shared contracts (PlayerSlot, InputSnapshot, …)
+├── engine/
+│   ├── loop.ts          120 Hz tick / 60 Hz render accumulator
+│   ├── input/           keyboard.ts, gamepad.ts, snapshot.ts, bindings.ts
+│   ├── render/          stage.ts (Pixi app), bloom.ts, world.ts (drawer), debug.ts
+│   └── audio/           empty — Web Audio scheduler stub planned for v0.4
+├── game/
+│   ├── world.ts         match state container (the World)
+│   ├── rules.ts         win conditions, round transitions
+│   ├── rng.ts           seeded PRNG — use this, never Math.random
+│   ├── entities/        player.ts, node.ts, laser.ts, pickup.ts (data shapes)
+│   ├── systems/         movement, nodeActivation, laserScheduler, collision, scoring
+│   └── arenas/          grid8x6.ts (only arena so far)
+├── ui/                  menu.ts, lobby.ts, hud.ts, statsScreen.ts (Pixi-drawn, not DOM)
+└── assets/              empty — placeholder geometry only at v0.1
+src-tauri/               Rust window shell, do not put game logic here
+```
+
+**Mental model:** input → snapshot → systems mutate world → render reads world. One-way data flow per tick. Don't let render code mutate world state.
+
+## Build & run
+
+```bash
+npm install
+npm run dev          # browser, http://localhost:1420
+npm run tauri:dev    # native window (needs Rust + Linux deps, see README)
+npm run typecheck    # strict TS gate
+npm run build        # typecheck + vite build
+```
+
+Linux Tauri deps: `libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev build-essential curl wget file`.
+
+## Character system (v0.2)
+
+Six classes, each with a distinct ultimate. Spec lives in `src/game/characters.ts`; ability state machine in `src/game/systems/abilities.ts`. Classes are inspired by Laser League's classes (clean-room re-implementation, no shared code).
+
+| Class | Ultimate | Physics |
+|-------|----------|---------|
+| SMASH | Forward dash that knocks enemies back into lasers | Dash velocity overrides input during active window; on contact, victim gets impulse decayed exponentially by `effects.ts` |
+| BLADE | Forward dash that kills on contact | Hit refills gauge instantly; miss = full cooldown. Charge-based reward for accuracy |
+| SHOCK | Radial AoE stun around the caster | Enemies in `radius` get `stunTimer` set; their gauge resets to 0 |
+| SNIPE | Two-step: place marker, teleport back killing along the line | Segment-vs-circle test along teleport line; respects pickup-shield |
+| GHOST | Temporary invincibility (walks through enemy lasers) | `collision.ts` skips alive players whose ability phase is 'active' for class 'ghost' |
+| THIEF | Convert nearest in-range enemy node to caster's color | If no node in range, charge is preserved (no-op trigger) |
+
+**Why each piece exists:**
+- `AbilityState` (in `types.ts`): `phase` enum captures idle/active/armed; `dashVel` is the impulse stored at trigger so `movement.ts` reads it without re-deriving from input.
+- `effects.ts` runs **first** in the tick, before abilities/movement. This is on purpose — knockback/stun timers must be current before movement decides what to apply.
+- `abilities.ts` runs **before** movement so a dash trigger this tick uses its velocity this tick.
+- `pickups.ts` runs **after** collision so a player who died this tick can't grab a shield retroactively.
+
+**Tunables you should not touch without reason:**
+- `KNOCKBACK_DECAY = 6.0` in `effects.ts` — tuned with `knockbackImpulse: 14` in SMASH spec. They're a pair.
+- `SPEED_BOOST_MULT = 1.6` in `movement.ts` — bigger and pickups become must-grabs; smaller and they feel pointless.
+- `ALL_CHARACTERS` order in `characters.ts` is the lobby cycle order — change it and players have to relearn the menu.
+
+## Power-ups (v0.2)
+
+Three kinds, spawned by `systems/pickups.ts` every ~8s up to `MAX_ACTIVE_PICKUPS = 2`:
+- **speed** — 1.6x player speed for 4s.
+- **stun** — instantly stuns nearest enemy-color player for 1.2s.
+- **shield** — 2.5s pickup-invincibility (separate field from GHOST's class invincibility — both work, neither blocks the other).
+
+Spawn positions: random arena cells via `world.rng()` (seeded — replays are deterministic), avoiding within 1.5 cells of any alive player.
+
+## Laser patterns (v0.2)
+
+Implemented in `systems/laserScheduler.ts`:
+- **sweep** — single radial beam rotating CCW (original v0.1 pattern).
+- **rotate** — two opposing beams (180° apart) rotating CCW. More coverage.
+- **pulse** — fixed horizontal beam, on for half the cycle, off for half. Creates rhythm gaps.
+- **segment-flip** — alternates horizontal/vertical at half-cycle. Forces position re-reads.
+
+The default arena (`arenas/grid8x6.ts`) now seeds one of each so a single round shows all four.
+
+## Match stats & MVP screen (v0.2)
+
+Per-player stats are tracked across a whole match (not reset per round) in
+`Player.stats`. Score weights live in `src/game/stats.ts` — keep them there;
+do not sprinkle constants across systems.
+
+Tracked counters and where they're written:
+- `ultKills` — `abilities.ts`: BLADE dash hit, SNIPE line-kill. (SMASH does not
+  count for ult kills directly — its knockback can shove a target into a laser
+  but the kill is then credited to the laser owner via `laserKills`. This is a
+  deliberate design choice: SMASH rewards positioning, not raw aim.)
+- `laserKills` — `collision.ts`: when a player dies to a laser, the same-color
+  player gets the credit. With one player per color (current rule) this is the
+  node activator.
+- `captures` — `nodeActivation.ts`: incremented only on color *change* (not
+  every tick of overlap). THIEF also counts as a capture.
+- `thiefSteals`, `shockHits` — `abilities.ts` direct write on success.
+- `roundsWon` — `world.ts`: credited at round-end to alive winning-color players.
+- `deaths` — set by whichever system caused the death (laser collision, BLADE,
+  SNIPE).
+
+`startNewMatch` clears stats; `startNewRound` does NOT — that's intentional so
+the post-match leaderboard shows the whole match.
+
+The leaderboard / MVP screen is `src/ui/statsScreen.ts`. It activates when
+`world.state` becomes `matchEnd`; the play surface (worldRenderer + HUD) is
+torn down and the stats screen takes over the hudLayer. Press Start/Enter to
+return to lobby. The MVP is the highest-scoring *player*, which may not be
+the winning *color* — by design (a player can dominate stats and still lose
+the round-count race).
+
+## Tests (v0.2)
+
+Vitest harness wired in. `npm run test`. Covers:
+- `tests/scoring.test.ts` — round-end logic (last-color, total-wipe, count-majority, ties).
+- `tests/abilities.test.ts` — SHOCK stun/range/teammate-safety, THIEF nearest-node + charge-preserve-on-miss, GHOST active-phase entry, SNIPE two-step + line-kill, BLADE hit-refill, SMASH knockback.
+- `tests/stats.test.ts` — score formula, weight ordering, tie-rank behavior, death penalty.
+
+Add tests for any new system — pure functions over `World` make this cheap.
+
+## What's done at v0.2.0
+
+- Fixed-timestep loop, 120/60.
+- Keyboard + gamepad input, 4 slots, lobby claim flow.
+- One arena (`grid8x6`) seeded with all 4 laser patterns.
+- Round/match scoring, last-color-standing → first to 5 wins.
+- 6 character classes with full ability state machines and physics.
+- 3 power-up kinds, RNG-spawned with seed determinism.
+- Per-player stats tracking + post-match MVP screen.
+- HUD (round/timer/scores) + state overlays (countdown / round end / match end).
+- Polished menu with neon decor + version line.
+- Bloom post-process.
+- Vitest harness, ~25 tests across scoring/abilities/stats.
+
+## What's NOT done (don't be surprised)
+
+- **No real art.** All shapes. `src/assets/` is empty on purpose.
+- **No audio.** `src/engine/audio/` is a placeholder dir for v0.4.
+- **No render-side feedback for abilities** — there's no visible aura for SHOCK, no marker line for SNIPE, no dash trail. The mechanics work; the reads don't yet. Add to the world renderer (`src/engine/render/world.ts`) before v0.3.
+- **No HUD ability gauge.** Players have no on-screen indicator of their charge bar. Trivial addition to `src/ui/hud.ts` — read `world.players[i].ability.charge` and draw a bar near each score box.
+- **No controller rebinding UI.** Roadmap v0.3.
+- **No netcode.** Won't be added without an explicit decision (see decision #4).
+- **One arena.** More are content-only; arena spec is data in `arenas/grid8x6.ts`.
+- **SMASH does not credit ult kills directly** when knocking a target into a laser — by design. Don't "fix" this without discussing the score-weight implications.
+
+## Conventions
+
+- Strict TS, no `any` outside justified seams.
+- Systems are functions over `World`, not classes.
+- Gameplay never imports from `src/engine/render/*`. Render reads world; world doesn't know render exists.
+- Rust side stays minimal. If you're tempted to add gameplay to `src-tauri/`, stop — see decision #3.
+- Determinism: seeded RNG, fixed timestep, no wall-clock in sim code.
+
+## Known traps
+
+- **Don't bypass the input snapshot.** Systems read `InputSnapshot`, not raw event handlers. `snapshot.ts` is the single source of per-tick truth.
+- **Render interpolation reads two world states.** If you add fields to entities, make sure they're either interpolatable (numbers) or stable across the tick boundary, or render will jitter.
+- **Pixi v8, not v7.** API differs (`Application.init()` is async, etc.). Check the v8 docs if syntax looks off.
+- **Tauri 2.x, not 1.x.** Plugin/permission model changed.
+- **Gamepad API is browser-flaky.** `gamepad.ts` polls; don't rely on connect/disconnect events alone.
+
+## Roadmap
+
+- [x] **v0.1.0** — playable hot-seat MVP, 1 laser pattern.
+- [x] **v0.2.0** — 6 character classes, power-ups, 4 laser patterns, match stats + MVP screen, polished menu, Vitest harness.
+- [ ] **v0.3** — render-side ability feedback (SHOCK aura, SNIPE marker, dash trail), HUD ability gauge, rebinding UI.
+- [ ] **v0.4** — Web Audio scheduler + music sync, 3 arenas, SFX for hits/dashes/captures.
+- [ ] **v0.5** — visual polish (particles, screen shake, neon trails, kill cam flashes).
+- [ ] **v1.0** — signed Win/Mac builds, GitHub releases, itch.io.
+
+## Provenance & licensing
+
+- MIT. Clean-room. **No assets, code, or content from Laser League.** Inspiration only — that game is delisted and not redistributable. Keep this clean if you generate or import anything.
+- Owner / primary maintainer: see commit history once initialized.
+
+## Repo state when handed off
+
+- `git` was **not** initialized in the snapshot you received. `git init` and a first commit is appropriate before further work.
+- `node_modules/`, `src-tauri/target/`, `dist/`, `.git/` are excluded from the archive. Run `npm install` first.
+- `.gitignore` already covers all build/editor/OS junk — don't loosen it.
