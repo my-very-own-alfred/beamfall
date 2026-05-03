@@ -268,7 +268,8 @@ export function updateLaserScheduler(world: World, dt: number): void {
     if (node.ownerColor === null) continue;
 
     const prevPhase = node.phase;
-    const newPhase = wrapPhase(prevPhase + dt * RATES[node.pattern]);
+    const rateMul = world.laserRateMultiplier ?? 1;
+    const newPhase = wrapPhase(prevPhase + dt * RATES[node.pattern] * rateMul);
     node.phase = newPhase;
 
     const segs = buildSegments(node.pos, node.ownerColor, prevPhase, newPhase, node.pattern);

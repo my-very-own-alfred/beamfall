@@ -5,10 +5,11 @@
 // the integrator via edge-triggered query hooks.
 
 import { Container, Graphics, Text } from 'pixi.js';
+import { hasStoredReplay } from '@/engine/replay';
 
 const NEON_COLORS = [0xff3344, 0x3388ff, 0xffdd33, 0x33dd66] as const;
 
-export type MenuChoice = 'play' | 'quit';
+export type MenuChoice = 'play' | 'replay' | 'quit';
 
 export interface Menu {
   /** Poll inputs and re-layout to the viewport. */
@@ -24,9 +25,10 @@ export interface MenuHooks {
   isGamepadButtonPressed: (idx: number, btn: number) => boolean;
 }
 
-const OPTIONS: readonly MenuChoice[] = ['play', 'quit'] as const;
+const OPTIONS: readonly MenuChoice[] = ['play', 'replay', 'quit'] as const;
 const OPTION_LABEL: Record<MenuChoice, string> = {
   play: 'Play',
+  replay: 'Replay last match',
   quit: 'Quit',
 };
 
@@ -132,10 +134,14 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
     }
 
     // --- Confirm ------------------------------------------------------------
+    // The "replay" option is disabled whenever no replay has been stored yet.
+    const replayAvailable = hasStoredReplay();
     const confirm = hooks.isKeyPressed('Enter') || isAnyGamepadButton(GAMEPAD_A);
     if (confirm && pendingChoice === null) {
       const choice = OPTIONS[selected];
-      if (choice !== undefined) pendingChoice = choice;
+      if (choice !== undefined && !(choice === 'replay' && !replayAvailable)) {
+        pendingChoice = choice;
+      }
     }
 
     // --- Layout -------------------------------------------------------------
@@ -173,8 +179,11 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
       const opt = OPTIONS[i];
       if (opt === undefined) continue;
       const isSelected = i === selected;
+      const disabled = opt === 'replay' && !replayAvailable;
       t.text = isSelected ? `> ${OPTION_LABEL[opt]}` : `  ${OPTION_LABEL[opt]}`;
-      t.style.fill = isSelected ? 0xffffff : 0x666666;
+      // Disabled option: dim grey regardless of selection so the user can see
+      // it can't be picked. Otherwise selected = white, unselected = grey.
+      t.style.fill = disabled ? 0x333333 : isSelected ? 0xffffff : 0x666666;
       t.x = viewportW / 2;
       t.y = optionsTop + i * optionGap;
     }

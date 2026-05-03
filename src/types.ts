@@ -215,6 +215,21 @@ export interface World {
    * Cosmetic only — not part of the deterministic simulation.
    */
   shake: number;
+  // ---------------------------------------------------------------------------
+  // Mutator-driven fields. All optional with safe defaults so existing test
+  // helpers and call sites continue to compile.
+  // ---------------------------------------------------------------------------
+  /** Multiplier on laser-pattern phase rate. 1 = normal, 0.5 = sluggish. */
+  laserRateMultiplier?: number;
+  /** Multiplier on ability gauge recharge rate. 1 = normal. */
+  abilityRateMultiplier?: number;
+  /** When false, pickup spawning is disabled. */
+  pickupsEnabled?: boolean;
+  /**
+   * Chaos-nodes timer (seconds). When >0, every 5 seconds a randomly chosen
+   * node's pattern is reassigned via world.rng(). 0 disables the effect.
+   */
+  chaosTimer?: number;
 }
 
 // ---------------------------------------------------------------------------

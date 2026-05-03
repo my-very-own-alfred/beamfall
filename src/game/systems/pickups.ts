@@ -83,18 +83,23 @@ function applyPickup(world: World, pickupKind: PickupKind, playerId: EntityId): 
 }
 
 export function updatePickups(world: World, dt: number): void {
-  // Spawn cadence.
-  world.pickupCooldown -= dt;
-  if (world.pickupCooldown <= 0 && world.pickups.length < MAX_ACTIVE_PICKUPS) {
-    world.pickupCooldown = SPAWN_INTERVAL_SEC;
-    const pos = pickSpawnPos(world);
-    if (pos) {
-      const kind = KINDS[Math.floor(world.rng() * KINDS.length)] ?? 'speed';
-      world.pickups.push(createPickup(allocPickupId(), pos, kind));
+  // `noPickups` mutator: skip the entire spawn loop (still process collected
+  // pickups already in-flight, though under this mutator there should be none).
+  const spawnsEnabled = world.pickupsEnabled ?? true;
+  if (spawnsEnabled) {
+    // Spawn cadence.
+    world.pickupCooldown -= dt;
+    if (world.pickupCooldown <= 0 && world.pickups.length < MAX_ACTIVE_PICKUPS) {
+      world.pickupCooldown = SPAWN_INTERVAL_SEC;
+      const pos = pickSpawnPos(world);
+      if (pos) {
+        const kind = KINDS[Math.floor(world.rng() * KINDS.length)] ?? 'speed';
+        world.pickups.push(createPickup(allocPickupId(), pos, kind));
+      }
+    } else if (world.pickupCooldown <= 0) {
+      // Re-arm even if blocked, so we retry next tick.
+      world.pickupCooldown = 0.5;
     }
-  } else if (world.pickupCooldown <= 0) {
-    // Re-arm even if blocked, so we retry next tick.
-    world.pickupCooldown = 0.5;
   }
 
   // Pickup-vs-player overlap.

@@ -60,11 +60,12 @@ function pointToSegmentDistance(
  * Recharge the gauge for an idle ability. Capped at 1.0. Stunned players do
  * not recharge — symmetric with Laser League's SHOCK/SMASH "reset" behavior.
  */
-function rechargeGauge(player: Player, dt: number): void {
+function rechargeGauge(world: World, player: Player, dt: number): void {
   if (player.effects.stunTimer > 0) return;
   const spec = CHARACTER_SPECS[player.characterClass];
   const rate = 1 / spec.cooldown; // gauge units per second
-  player.ability.charge = Math.min(1, player.ability.charge + rate * dt);
+  const mul = world.abilityRateMultiplier ?? 1;
+  player.ability.charge = Math.min(1, player.ability.charge + rate * mul * dt);
 }
 
 /**
@@ -317,7 +318,7 @@ export function updateAbilities(
       }
     } else {
       // 'idle': gauge fills.
-      rechargeGauge(player, dt);
+      rechargeGauge(world, player, dt);
     }
   }
 }

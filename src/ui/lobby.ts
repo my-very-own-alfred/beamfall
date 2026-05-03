@@ -17,6 +17,8 @@ import { COLOR_HEX } from '@/types';
 import { ALL_CHARACTERS, CHARACTER_SPECS, DEFAULT_CHARACTER } from '@/game/characters';
 import { ARENAS, ARENA_ORDER, DEFAULT_ARENA_ID } from '@/game/arenas';
 import type { ArenaId } from '@/game/arenas';
+import { MUTATORS, MUTATOR_ORDER } from '@/game/mutators';
+import type { MutatorId } from '@/game/mutators';
 
 export interface LobbyResult {
   bindings: PlayerBinding[];
@@ -29,6 +31,8 @@ export interface Lobby {
   characters(): CharacterClass[];
   /** Currently-selected arena. Cycle with Tab. */
   arenaId(): ArenaId;
+  /** Selected mutators. Toggled with keys 1\u20135. */
+  mutators(): MutatorId[];
   isReady(): boolean;
   destroy(): void;
 }
@@ -141,6 +145,58 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
   };
   refreshArenaInfo();
 
+  // --- Mutator panel ------------------------------------------------------
+  // Selected mutators are restored from localStorage if present (defensive
+  // parse: any malformed entry is silently dropped).
+  const selectedMutators = new Set<MutatorId>();
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem('beamfall:lastMutators');
+      if (raw !== null) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          for (const id of parsed) {
+            if (typeof id === 'string' && (MUTATOR_ORDER as readonly string[]).includes(id)) {
+              selectedMutators.add(id as MutatorId);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore — fall through to empty set.
+  }
+
+  const mutatorHeading = new Text({
+    text: 'Mutators (1\u20135 to toggle):',
+    style: { fontFamily: 'monospace', fontSize: 14, fill: 0xffffff, align: 'left' },
+  });
+  root.addChild(mutatorHeading);
+
+  const mutatorRows: Text[] = MUTATOR_ORDER.map(() => {
+    const t = new Text({
+      text: '',
+      style: { fontFamily: 'monospace', fontSize: 13, fill: 0xcccccc, align: 'left' },
+    });
+    root.addChild(t);
+    return t;
+  });
+
+  const refreshMutatorRows = (): void => {
+    for (let i = 0; i < MUTATOR_ORDER.length; i++) {
+      const id = MUTATOR_ORDER[i]!;
+      const spec = MUTATORS[id];
+      const t = mutatorRows[i];
+      if (!t) continue;
+      const mark = selectedMutators.has(id) ? '[x]' : '[ ]';
+      t.text = `${i + 1} ${mark} ${spec.name} \u2014 ${spec.description}`;
+      t.style.fill = selectedMutators.has(id) ? 0xffd84d : 0xaaaaaa;
+    }
+  };
+  refreshMutatorRows();
+
+  const MUTATOR_KEYS: readonly string[] = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5'];
+
   const bindings: (PlayerBinding | null)[] = [null, null, null, null];
   const chars: CharacterClass[] = [
     DEFAULT_CHARACTER, DEFAULT_CHARACTER, DEFAULT_CHARACTER, DEFAULT_CHARACTER,
@@ -202,6 +258,20 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
       refreshArenaInfo();
     }
 
+    // Mutator toggles (1\u20135).
+    let mutatorsChanged = false;
+    for (let i = 0; i < MUTATOR_KEYS.length; i++) {
+      const key = MUTATOR_KEYS[i]!;
+      const id = MUTATOR_ORDER[i];
+      if (id === undefined) continue;
+      if (hooks.isKeyPressed(key)) {
+        if (selectedMutators.has(id)) selectedMutators.delete(id);
+        else selectedMutators.add(id);
+        mutatorsChanged = true;
+      }
+    }
+    if (mutatorsChanged) refreshMutatorRows();
+
     // Start trigger
     if (!ready && bindings.some((b) => b !== null)) {
       let startPressed = hooks.isKeyPressed('Enter');
@@ -246,12 +316,24 @@ export function createLobby(parent: Container, hooks: LobbyHooks): Lobby {
       view.classText.text = binding === null ? '—' : spec.name;
       view.tagline.text = binding === null ? '' : spec.tagline;
     }
+
+    // Mutator panel — placed below the slot grid.
+    const mutatorTop = gridTop + gridH + 16;
+    mutatorHeading.x = gridLeft;
+    mutatorHeading.y = mutatorTop;
+    for (let i = 0; i < mutatorRows.length; i++) {
+      const t = mutatorRows[i];
+      if (!t) continue;
+      t.x = gridLeft;
+      t.y = mutatorTop + 22 + i * 18;
+    }
   };
 
   return {
     update,
     bindings: () => bindings.filter((b): b is PlayerBinding => b !== null),
     arenaId: () => arenaId,
+    mutators: () => MUTATOR_ORDER.filter((id) => selectedMutators.has(id)),
     characters: () =>
       bindings
         .map((b, i) => (b !== null ? chars[i] ?? DEFAULT_CHARACTER : null))

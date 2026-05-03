@@ -1,7 +1,10 @@
 // Beamfall — runtime entrypoint.
 // Wires the engine loop, input sources, render stage, world simulation, and
 // UI screens (menu / lobby / HUD) together. State machine drives the
-// transition: menu -> lobby -> match.
+// transition: menu -> lobby -> match -> stats, plus pause overlay during
+// match and a 'replay' state for deterministic playback.
+
+import { Text } from 'pixi.js';
 
 import { startLoop } from '@/engine/loop';
 import { KeyboardSource } from '@/engine/input/keyboard';
@@ -17,6 +20,7 @@ import {
   tick as tickWorld,
   setInputProvider,
   startNewMatch,
+  startNewRound,
 } from '@/game/world';
 import { createHud } from '@/ui/hud';
 import type { Hud } from '@/ui/hud';
@@ -26,13 +30,27 @@ import { createMenu } from '@/ui/menu';
 import type { Menu } from '@/ui/menu';
 import { createStatsScreen } from '@/ui/statsScreen';
 import type { StatsScreen } from '@/ui/statsScreen';
+import { createPauseMenu } from '@/ui/pauseMenu';
+import type { PauseMenu } from '@/ui/pauseMenu';
+import { applyMutators } from '@/game/mutators';
+import type { MutatorId } from '@/game/mutators';
+import {
+  createPlayer as createReplayPlayer,
+  createRecorder,
+  loadReplay,
+  saveReplay,
+} from '@/engine/replay';
+import type { Replay, ReplayPlayer, ReplayRecorder } from '@/engine/replay';
 import { TICK_HZ } from '@/types';
-import type { World } from '@/types';
+import type { InputSnapshot, World } from '@/types';
 
-type AppState = 'menu' | 'lobby' | 'match' | 'stats';
+type AppState = 'menu' | 'lobby' | 'match' | 'stats' | 'replay';
 
 const VIEW_W = 1280;
 const VIEW_H = 720;
+
+const KEY_PAUSE = 'Escape';
+const GAMEPAD_START = 9;
 
 async function main(): Promise<void> {
   const parent = document.getElementById('app');
@@ -63,6 +81,21 @@ async function main(): Promise<void> {
   let worldRenderer: WorldRenderer | null = null;
   let world: World | null = null;
   let statsScreen: StatsScreen | null = null;
+  let pauseMenu: PauseMenu | null = null;
+  let paused = false;
+
+  // Replay-related state.
+  let recorder: ReplayRecorder | null = null;
+  let replayPlayer: ReplayPlayer | null = null;
+  let replayBadge: Text | null = null;
+  // Captured at match-start so we can build the Replay on match-end.
+  let recordingMeta: {
+    seed: number;
+    bindings: World['bindings'];
+    characters: World['characters'];
+    arenaId: ReturnType<Lobby['arenaId']>;
+    mutators: MutatorId[];
+  } | null = null;
 
   const debug = createDebugOverlay(stage);
 
@@ -81,19 +114,70 @@ async function main(): Promise<void> {
     }
   };
 
-  // Per-tick input provider for the simulation. World is captured by closure
-  // and may be null before a match starts.
-  setInputProvider(() => {
+  // Per-tick input provider for the simulation. World and replay-player are
+  // captured by closure; the closure picks the right source per tick.
+  setInputProvider((): InputSnapshot[] => {
+    if (replayPlayer !== null) return replayPlayer.next();
     if (!world) return [];
-    return buildSnapshots(world.bindings, keyboard, gamepad);
+    const snapshots = buildSnapshots(world.bindings, keyboard, gamepad);
+    if (recorder !== null) recorder.record(snapshots);
+    return snapshots;
   });
+
+  // Helper: tear down the play surface (renderer + HUD). Used by both
+  // match-end transition and pause "Return to Menu".
+  const teardownPlaySurface = (): void => {
+    if (worldRenderer !== null) {
+      worldRenderer.destroy();
+      worldRenderer = null;
+    }
+    if (hud !== null) {
+      hud.destroy();
+      hud = null;
+    }
+    if (replayBadge !== null) {
+      replayBadge.destroy();
+      replayBadge = null;
+    }
+  };
+
+  // Helper: build a play surface (renderer + HUD) for the current world.
+  const buildPlaySurface = (w: World): void => {
+    const arenaPxW = w.arena.cols * w.arena.cellSize;
+    const arenaPxH = w.arena.rows * w.arena.cellSize;
+    const offsetX = (VIEW_W - arenaPxW) / 2;
+    const offsetY = (VIEW_H - arenaPxH) / 2;
+    stage.bgLayer.x = offsetX;
+    stage.bgLayer.y = offsetY;
+    stage.glowLayer.x = offsetX;
+    stage.glowLayer.y = offsetY;
+    worldRenderer = createWorldRenderer(stage, arenaPxW, arenaPxH);
+    hud = createHud(stage.hudLayer);
+  };
+
+  const openMenu = (): void => {
+    menu = createMenu(stage.hudLayer, {
+      isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
+      isGamepadButtonPressed: (idx: number, btn: number): boolean =>
+        gamepad.buttonPressed(idx, btn),
+    });
+    appState = 'menu';
+  };
+
+  const openLobby = (): void => {
+    lobby = createLobby(stage.hudLayer, {
+      isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
+      isGamepadConnected: (idx: number): boolean => gamepad.isConnected(idx),
+      isGamepadButtonPressed: (idx: number, btn: number): boolean =>
+        gamepad.buttonPressed(idx, btn),
+    });
+    appState = 'lobby';
+  };
 
   // --- Loop ----------------------------------------------------------------
   startLoop({
     tickHz: TICK_HZ,
     onPollInputs: (): void => {
-      // Poll gamepad once per rendered frame. Keyboard state is event-driven
-      // and stays current automatically; edges are cleared at end of tick.
       gamepad.poll();
     },
     onTick: (dt: number): void => {
@@ -103,68 +187,142 @@ async function main(): Promise<void> {
         if (choice === 'play') {
           menu.destroy();
           menu = null;
-          lobby = createLobby(stage.hudLayer, {
-            isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
-            isGamepadConnected: (idx: number): boolean => gamepad.isConnected(idx),
-            isGamepadButtonPressed: (idx: number, btn: number): boolean =>
-              gamepad.buttonPressed(idx, btn),
-          });
-          appState = 'lobby';
+          openLobby();
+        } else if (choice === 'replay') {
+          const replay = loadReplay();
+          if (replay !== null) {
+            menu.destroy();
+            menu = null;
+            startReplay(replay);
+          }
         } else if (choice === 'quit') {
-          // Tauri webview: window.close() works when invoked from app context.
           window.close();
         }
       } else if (appState === 'lobby' && lobby !== null) {
         lobby.update(VIEW_W, VIEW_H);
         if (lobby.isReady()) {
           const bindings = lobby.bindings();
-          // Guard: lobby.isReady() is gated on at least one binding, but be
-          // defensive for the off chance the user somehow advanced empty.
           if (bindings.length > 0) {
             const characters = lobby.characters();
+            const arenaId = lobby.arenaId();
+            const mutators = lobby.mutators();
             lobby.destroy();
             lobby = null;
 
-            const w = createWorld(bindings, characters, undefined, lobby.arenaId());
+            // Use an explicit seed so replays reproduce. Date.now() is fine
+            // here — wall-clock is consumed exactly once, at match boot, and
+            // captured into the replay metadata.
+            const seed = Date.now() >>> 0;
+            const w = createWorld(bindings, characters, seed, arenaId);
+            applyMutators(w, mutators);
             startNewMatch(w);
             world = w;
 
-            const arenaPxW = w.arena.cols * w.arena.cellSize;
-            const arenaPxH = w.arena.rows * w.arena.cellSize;
-            // Center the arena in the viewport.
-            const offsetX = (VIEW_W - arenaPxW) / 2;
-            const offsetY = (VIEW_H - arenaPxH) / 2;
-            stage.bgLayer.x = offsetX;
-            stage.bgLayer.y = offsetY;
-            stage.glowLayer.x = offsetX;
-            stage.glowLayer.y = offsetY;
+            // Persist mutator selection.
+            try {
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('beamfall:lastMutators', JSON.stringify(mutators));
+              }
+            } catch {
+              // Best-effort.
+            }
 
-            worldRenderer = createWorldRenderer(stage, arenaPxW, arenaPxH);
-            hud = createHud(stage.hudLayer);
+            // Begin recording. Capture metadata for finalize() at match end.
+            recorder = createRecorder();
+            recordingMeta = {
+              seed,
+              bindings: w.bindings.slice(),
+              characters: w.characters.slice(),
+              arenaId,
+              mutators: mutators.slice(),
+            };
+
+            buildPlaySurface(w);
             appState = 'match';
           }
         }
       } else if (appState === 'match' && world !== null) {
-        tickWorld(world, dt);
+        // Pause toggle. Edge-triggered on Escape OR gamepad Start.
+        let pauseEdge = keyboard.wasPressed(KEY_PAUSE);
+        if (!pauseEdge) {
+          for (let g = 0; g < 4; g++) {
+            if (gamepad.buttonPressed(g, GAMEPAD_START)) {
+              pauseEdge = true;
+              break;
+            }
+          }
+        }
+        if (pauseEdge) {
+          if (paused) {
+            paused = false;
+            if (pauseMenu !== null) {
+              pauseMenu.destroy();
+              pauseMenu = null;
+            }
+          } else {
+            paused = true;
+            pauseMenu = createPauseMenu(stage.hudLayer, {
+              isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
+              isGamepadButtonPressed: (idx: number, btn: number): boolean =>
+                gamepad.buttonPressed(idx, btn),
+            });
+          }
+        }
 
-        // Match end: tear down play surface and show stats screen. The world
-        // already finished its 'matchEnd' transition by this point — we just
-        // need to swap the UI.
-        if (world.state === 'matchEnd') {
-          if (worldRenderer !== null) {
-            worldRenderer.destroy();
-            worldRenderer = null;
+        if (paused && pauseMenu !== null) {
+          pauseMenu.update(VIEW_W, VIEW_H);
+          const choice = pauseMenu.pick();
+          if (choice === 'resume') {
+            paused = false;
+            pauseMenu.destroy();
+            pauseMenu = null;
+          } else if (choice === 'restart') {
+            paused = false;
+            pauseMenu.destroy();
+            pauseMenu = null;
+            startNewRound(world);
+          } else if (choice === 'menu') {
+            paused = false;
+            pauseMenu.destroy();
+            pauseMenu = null;
+            // Drop the in-progress recording — it's meaningless without a
+            // matchEnd transition.
+            recorder = null;
+            recordingMeta = null;
+            teardownPlaySurface();
+            world = null;
+            openMenu();
           }
-          if (hud !== null) {
-            hud.destroy();
-            hud = null;
+        } else {
+          tickWorld(world, dt);
+
+          if (world.state === 'matchEnd') {
+            // Finalize the recording before tearing anything down.
+            if (recorder !== null && recordingMeta !== null) {
+              const replay = recorder.finalize(recordingMeta);
+              saveReplay(replay);
+            }
+            recorder = null;
+            recordingMeta = null;
+
+            teardownPlaySurface();
+            statsScreen = createStatsScreen(stage.hudLayer, world, {
+              isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
+              isGamepadButtonPressed: (idx: number, btn: number): boolean =>
+                gamepad.buttonPressed(idx, btn),
+            });
+            appState = 'stats';
           }
-          statsScreen = createStatsScreen(stage.hudLayer, world, {
-            isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
-            isGamepadButtonPressed: (idx: number, btn: number): boolean =>
-              gamepad.buttonPressed(idx, btn),
-          });
-          appState = 'stats';
+        }
+      } else if (appState === 'replay' && world !== null && replayPlayer !== null) {
+        tickWorld(world, dt);
+        // End playback when the recorded inputs run out OR the match has
+        // already ended via the recorded sim.
+        if (replayPlayer.exhausted() || world.state === 'matchEnd') {
+          replayPlayer = null;
+          teardownPlaySurface();
+          world = null;
+          openMenu();
         }
       } else if (appState === 'stats' && statsScreen !== null) {
         statsScreen.update(VIEW_W, VIEW_H);
@@ -172,22 +330,10 @@ async function main(): Promise<void> {
           statsScreen.destroy();
           statsScreen = null;
           world = null;
-          // Re-open the lobby with a fresh component so claims start clean.
-          lobby = createLobby(stage.hudLayer, {
-            isKeyPressed: (code: string): boolean => keyboard.wasPressed(code),
-            isGamepadConnected: (idx: number): boolean => gamepad.isConnected(idx),
-            isGamepadButtonPressed: (idx: number, btn: number): boolean =>
-              gamepad.buttonPressed(idx, btn),
-          });
-          appState = 'lobby';
+          openLobby();
         }
       }
 
-      // Edge-triggered keyboard state must be cleared once per tick AFTER all
-      // consumers (menu/lobby/snapshot builder) have read it. Gamepad edges
-      // are refreshed implicitly by the next poll() at the start of the next
-      // frame; multi-tick frames will only see edges on the first tick, which
-      // is acceptable for this MVP.
       keyboard.clearEdges();
     },
     onRender: (alpha: number): void => {
@@ -201,6 +347,39 @@ async function main(): Promise<void> {
       debug.update(lastFps, TICK_HZ, world !== null ? world.state : appState);
     },
   });
+
+  // ---------------------------------------------------------------------
+  // Replay startup. Builds an identical World from the Replay metadata,
+  // installs the recorded-input source, and switches to AppState 'replay'.
+  // ---------------------------------------------------------------------
+  function startReplay(replay: Replay): void {
+    const w = createWorld(replay.bindings, replay.characters, replay.seed, replay.arenaId);
+    applyMutators(w, replay.mutators);
+    startNewMatch(w);
+    world = w;
+
+    replayPlayer = createReplayPlayer(replay);
+
+    buildPlaySurface(w);
+
+    // Small "REPLAY" badge in top-left corner so it's clear which mode we're in.
+    replayBadge = new Text({
+      text: 'REPLAY',
+      style: {
+        fontFamily: 'monospace',
+        fontSize: 16,
+        fill: 0xff5577,
+        align: 'left',
+        fontWeight: 'bold',
+        letterSpacing: 2,
+      },
+    });
+    replayBadge.x = 8;
+    replayBadge.y = 8;
+    stage.hudLayer.addChild(replayBadge);
+
+    appState = 'replay';
+  }
 
   // --- Resize: keep logical viewport at VIEW_W x VIEW_H, scale via CSS. ----
   const handleResize = (): void => {

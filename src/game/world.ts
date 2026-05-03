@@ -5,6 +5,7 @@ import type {
   Color,
   EntityId,
   InputSnapshot,
+  LaserPattern,
   PlayerBinding,
   PlayerSlot,
   World,
@@ -32,6 +33,43 @@ const SLOT_COLORS: readonly Color[] = ['red', 'blue', 'yellow', 'green'];
 const COUNTDOWN_SEC = 3;
 const ROUND_END_HOLD_SEC = 2;
 const PICKUP_FIRST_SPAWN_SEC = 5;
+/** Interval between chaos-nodes pattern reassignments, in seconds. */
+const CHAOS_INTERVAL_SEC = 5;
+/** All laser patterns reachable to chaos-nodes. Must include every union variant. */
+const ALL_LASER_PATTERNS: readonly LaserPattern[] = [
+  'sweep',
+  'rotate',
+  'pulse',
+  'segment-flip',
+  'zigzag',
+  'ring',
+  'pendulum',
+] as const;
+
+/**
+ * `chaosNodes` mutator step. When `world.chaosTimer > 0` the system counts
+ * down each tick; on every CHAOS_INTERVAL_SEC tick boundary a randomly chosen
+ * node has its pattern reassigned via `world.rng()`.
+ *
+ * Skips if `chaosTimer === 0` (mutator off). Pure determinism: all randomness
+ * routes through `world.rng`.
+ */
+function updateChaosNodes(world: World, dt: number): void {
+  if ((world.chaosTimer ?? 0) === 0) return;
+  if (world.nodes.length === 0) return;
+  world.chaosTimer = (world.chaosTimer ?? 0) - dt;
+  if ((world.chaosTimer ?? 0) > 0) return;
+  // Reassign one random node's pattern.
+  const nodeIdx = Math.floor(world.rng() * world.nodes.length) % world.nodes.length;
+  const patternIdx = Math.floor(world.rng() * ALL_LASER_PATTERNS.length) % ALL_LASER_PATTERNS.length;
+  const node = world.nodes[nodeIdx];
+  const pattern = ALL_LASER_PATTERNS[patternIdx];
+  if (node && pattern) {
+    node.pattern = pattern;
+    node.flashTimer = 0.35;
+  }
+  world.chaosTimer = CHAOS_INTERVAL_SEC;
+}
 
 let inputProvider: () => InputSnapshot[] = () => [];
 export function setInputProvider(p: () => InputSnapshot[]): void {
@@ -85,6 +123,11 @@ export function createWorld(
     pickupCooldown: PICKUP_FIRST_SPAWN_SEC,
     hitStopTimer: 0,
     shake: 0,
+    // Mutator defaults — applyMutators may overwrite these post-construction.
+    laserRateMultiplier: 1,
+    abilityRateMultiplier: 1,
+    pickupsEnabled: true,
+    chaosTimer: 0,
   };
 
   return world;
@@ -131,6 +174,7 @@ export function tick(world: World, dt: number): void {
       updateLaserScheduler(world, dt);
       updateCollision(world);
       updatePickups(world, dt);
+      updateChaosNodes(world, dt);
 
       world.roundTimer -= dt;
 
@@ -175,6 +219,8 @@ export function tick(world: World, dt: number): void {
 }
 
 export function startNewRound(world: World): void {
+  // `instantCharge` mutator: ability gauge starts pre-charged each round.
+  const instantCharge = (world.abilityRateMultiplier ?? 1) > 1;
   for (const player of world.players) {
     const spawn = world.arena.spawnPoints[player.slot] ?? { x: 1, y: 1 };
     player.pos = { x: spawn.x, y: spawn.y };
@@ -182,7 +228,7 @@ export function startNewRound(world: World): void {
     player.vel = { x: 0, y: 0 };
     player.alive = true;
     player.ability.phase = 'idle';
-    player.ability.charge = 0;
+    player.ability.charge = instantCharge ? 1 : 0;
     player.ability.activeTimer = 0;
     player.ability.marker = null;
     player.ability.dashVel = null;
