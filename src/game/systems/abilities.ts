@@ -154,6 +154,9 @@ function doShockBurst(world: World, caster: Player): void {
   }
 }
 
+/** THIEF capture flash duration (seconds) for visual feedback. */
+const THIEF_FLASH_DURATION = 0.35;
+
 /**
  * THIEF swap: convert the closest enemy-owned node within `range` to the
  * caster's color. Returns true on success.
@@ -174,7 +177,10 @@ function doThiefSwap(world: World, caster: Player): boolean {
     }
   }
   if (bestIdx < 0) return false;
-  world.nodes[bestIdx]!.ownerColor = caster.color;
+  const stolen = world.nodes[bestIdx]!;
+  stolen.ownerColor = caster.color;
+  // Set the visual flash; decayed by laserScheduler each tick.
+  stolen.flashTimer = THIEF_FLASH_DURATION;
   caster.stats.thiefSteals += 1;
   caster.stats.captures += 1;
   return true;
@@ -200,6 +206,9 @@ function doSnipeTeleport(world: World, caster: Player): void {
       other.alive = false;
       other.stats.deaths += 1;
       caster.stats.ultKills += 1;
+      // Impact: hit-stop + medium shake on kill.
+      world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
+      world.shake = Math.max(world.shake, 9);
     }
   }
   caster.prevPos = { x: caster.pos.x, y: caster.pos.y };
@@ -232,6 +241,9 @@ function resolveDashHits(world: World, attacker: Player): boolean {
         other.alive = false;
         other.stats.deaths += 1;
         attacker.stats.ultKills += 1;
+        // BLADE kill: full hit-stop + medium-shake impact.
+        world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
+        world.shake = Math.max(world.shake, 9);
       } else {
         // SMASH: knockback in direction of dash velocity.
         const dv = attacker.ability.dashVel;
@@ -245,6 +257,9 @@ function resolveDashHits(world: World, attacker: Player): boolean {
             other.effects.knockback.y = ny * imp;
           }
         }
+        // SMASH dash hit: small shake + hit-stop for the impact thump.
+        world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
+        world.shake = Math.max(world.shake, 5);
       }
     }
   }

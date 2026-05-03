@@ -4,7 +4,7 @@
 // Owned by T5 UI scope. Reads World; never mutates it.
 
 import { Container, Graphics, Text } from 'pixi.js';
-import type { Color, GameState, World } from '@/types';
+import type { CharacterClass, Color, GameState, Player, World } from '@/types';
 import { COLOR_HEX } from '@/types';
 
 export interface Hud {
@@ -23,11 +23,19 @@ interface ScoreBox {
   readonly bg: Graphics;
   readonly border: Graphics;
   readonly label: Text;
+  /** Charge gauge (background outline + fill) under the score box. */
+  readonly gauge: Graphics;
+  /** Class badge text — single letter inside the gauge. */
+  readonly badge: Text;
 }
 
 const SCORE_BOX_W = 80;
 const SCORE_BOX_H = 60;
 const SCORE_BOX_MARGIN = 16;
+const GAUGE_W = 80;
+const GAUGE_H = 6;
+const GAUGE_GAP = 4; // px between score box and gauge
+const BADGE_GAP = 4; // px between gauge end and badge text
 
 /** Corner placement order, mapping to colors red/blue/yellow/green. */
 type Corner = 'tl' | 'tr' | 'bl' | 'br';
@@ -132,6 +140,46 @@ export function createHud(parent: Container): Hud {
       // Center the number within the box.
       box.label.x = SCORE_BOX_W / 2;
       box.label.y = SCORE_BOX_H / 2;
+
+      // --- Ability charge gauge under the score box -----------------------
+      // Gauges are anchored differently per corner:
+      //   tl/tr (top): below the score box.
+      //   bl/br (bottom): above the score box (so they stay on-screen).
+      const gaugeY = corner === 'bl' || corner === 'br' ? -GAUGE_GAP - GAUGE_H : SCORE_BOX_H + GAUGE_GAP;
+
+      const player = findAlivePlayerByColor(world, box.color);
+      const hex = COLOR_HEX[box.color];
+      box.gauge.clear();
+
+      if (player !== null) {
+        const charge = Math.max(0, Math.min(1, player.ability.charge));
+        const isFull = charge >= 0.999;
+        const armed = player.ability.phase === 'armed';
+        // SNIPE-armed pulse: ~3 Hz oscillation derived from tickCount (deterministic look).
+        // Tick rate is 120 Hz; a 3 Hz cycle is 40 ticks.
+        const pulse = armed
+          ? 0.5 + 0.5 * Math.sin((world.tickCount / 40) * Math.PI * 2)
+          : 1;
+        const fillAlpha = isFull ? 1 : 0.55;
+        const finalAlpha = fillAlpha * (armed ? 0.5 + 0.5 * pulse : 1);
+
+        // Background outline (always visible) + fill.
+        box.gauge.rect(0, gaugeY, GAUGE_W, GAUGE_H).stroke({ width: 1, color: hex, alpha: 0.9 });
+        if (charge > 0) {
+          box.gauge.rect(0, gaugeY, GAUGE_W * charge, GAUGE_H).fill({ color: hex, alpha: finalAlpha });
+        }
+
+        const cls = player.characterClass;
+        box.badge.text = badgeFor(cls);
+        box.badge.style.fill = isFull ? 0xffffff : 0xcccccc;
+        box.badge.x = GAUGE_W + BADGE_GAP;
+        box.badge.y = gaugeY + GAUGE_H / 2;
+        box.badge.visible = true;
+      } else {
+        // Slot empty — outline only, no fill, no badge.
+        box.gauge.rect(0, gaugeY, GAUGE_W, GAUGE_H).stroke({ width: 1, color: hex, alpha: 0.3 });
+        box.badge.visible = false;
+      }
     }
 
     // --- Round timer + round number -----------------------------------------
@@ -193,7 +241,24 @@ function createScoreBox(parent: Container, color: Color): ScoreBox {
   label.anchor.set(0.5);
   root.addChild(label);
 
-  return { color, root, bg, border, label };
+  // Ability charge gauge — background outline visible, fill written each frame.
+  const gauge = new Graphics();
+  root.addChild(gauge);
+
+  const badge = new Text({
+    text: '',
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 12,
+      fill: 0xffffff,
+      align: 'center',
+      fontWeight: 'bold',
+    },
+  });
+  badge.anchor.set(0, 0.5);
+  root.addChild(badge);
+
+  return { color, root, bg, border, label, gauge, badge };
 }
 
 function cornerXY(corner: Corner, w: number, h: number): { x: number; y: number } {
@@ -307,6 +372,44 @@ function applyOverlay(
   secondary.text = secondaryText;
 
   reflowOverlay(dim, primary, secondary, w, h);
+}
+
+/**
+ * Disambiguated single-letter class badge. SNIPE/SHOCK/SMASH all start with
+ * 'S', so we map them to N/K/M respectively.
+ */
+export function badgeFor(cls: CharacterClass): string {
+  switch (cls) {
+    case 'smash':
+      return 'M';
+    case 'snipe':
+      return 'N';
+    case 'shock':
+      return 'K';
+    case 'blade':
+      return 'B';
+    case 'ghost':
+      return 'G';
+    case 'thief':
+      return 'T';
+  }
+}
+
+/**
+ * Find the first alive player matching the given color. Returns null if no
+ * alive player exists for that color (slot empty / dead). Sourced separately
+ * from the score box so future per-slot HUDs can reuse the helper.
+ */
+function findAlivePlayerByColor(world: World, color: Color): Player | null {
+  for (const p of world.players) {
+    if (p.color === color && p.alive) return p;
+  }
+  // If nobody alive but slot exists, fall back to the dead player so we still
+  // display their class & last-charge (so the gauge doesn't pop in/out).
+  for (const p of world.players) {
+    if (p.color === color) return p;
+  }
+  return null;
 }
 
 function reflowOverlay(

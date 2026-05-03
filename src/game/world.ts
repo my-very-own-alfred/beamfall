@@ -83,6 +83,8 @@ export function createWorld(
     characters: characters.slice(),
     rng,
     pickupCooldown: PICKUP_FIRST_SPAWN_SEC,
+    hitStopTimer: 0,
+    shake: 0,
   };
 
   return world;
@@ -113,6 +115,14 @@ export function tick(world: World, dt: number): void {
       return;
     }
     case 'playing': {
+      // Hit-stop: when active, freeze every gameplay system but keep the
+      // timer counting down so we eventually unfreeze. Render still runs at
+      // the call-site — that's the whole point (frozen-frame impact).
+      if (world.hitStopTimer > 0) {
+        world.hitStopTimer = Math.max(0, world.hitStopTimer - dt);
+        return;
+      }
+
       const snapshots = inputProvider();
       updateEffects(world, dt);
       updateAbilities(world, snapshots, dt);
@@ -146,8 +156,11 @@ export function tick(world: World, dt: number): void {
       world.roundTimer -= dt;
       if (world.roundTimer <= 0) {
         const matchWinner = getMatchWinner(world);
-        if (matchWinner !== null) world.state = 'matchEnd';
-        else startNewRound(world);
+        if (matchWinner !== null) {
+          world.state = 'matchEnd';
+          // Big match-end shake (decayed by render).
+          world.shake = Math.max(world.shake, 16);
+        } else startNewRound(world);
       }
       return;
     }
@@ -182,11 +195,13 @@ export function startNewRound(world: World): void {
   for (const node of world.nodes) {
     node.ownerColor = null;
     node.phase = 0;
+    node.flashTimer = 0;
   }
 
   world.lasers.length = 0;
   world.pickups.length = 0;
   world.pickupCooldown = PICKUP_FIRST_SPAWN_SEC;
+  world.hitStopTimer = 0;
 
   world.roundNumber++;
   world.state = 'countdown';

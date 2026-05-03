@@ -2,11 +2,26 @@
 // Owns the Pixi Graphics for arena, nodes, lasers, and players. Each frame
 // (except the static arena) is cleared and re-stroked from the latest world
 // state, with prevPos -> pos interpolation driven by the loop's render alpha.
+//
+// This module also owns the cosmetic, render-scoped state:
+//   - screen shake offset (applied to bg + glow layers, decayed here)
+//   - particle system (death bursts, capture sparks, dash trail)
+//   - ability-FX overlays (SHOCK ring, SNIPE line, GHOST halo, dash trail)
+//   - per-player wasAlive cache for death-event detection
+//   - per-node ownerColor cache for capture-event detection
+//
+// Convention: render reads world; render owns its own caches/buffers; gameplay
+// systems set numeric trigger fields (world.shake, hitStopTimer) but never
+// import from this module.
 
 import { Graphics } from 'pixi.js';
-import type { World, Color, Vec2 } from '@/types';
+import type { World, Color, Player, Vec2 } from '@/types';
 import { COLOR_HEX } from '@/types';
 import type { Stage } from './stage';
+import { createParticles } from './particles';
+import type { Particles } from './particles';
+import { createAbilityFx, ghostBodyAlpha } from './abilityFx';
+import type { AbilityFx } from './abilityFx';
 
 /**
  * Per-frame renderer for the simulation world.
@@ -42,6 +57,8 @@ const LASER_CORE_WIDTH = 2;
 const NODE_RADIUS_FACTOR = 0.18;
 /** Player highlight (inner) radius as fraction of player radius. */
 const PLAYER_HIGHLIGHT_FACTOR = 0.45;
+/** Exponential decay rate (1/sec) for screen-shake magnitude. */
+const SHAKE_DECAY_RATE = 12;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -123,6 +140,31 @@ export function createWorldRenderer(
   lasersGraphics.blendMode = 'add';
   stage.glowLayer.addChild(lasersGraphics);
 
+  // --- Ability FX (drawn on glow layer so bloom kisses them) --------------
+  const abilityFx: AbilityFx = createAbilityFx(stage.glowLayer);
+
+  // --- Particles (fx layer; not bloomed, intentional — keeps them crisp)
+  const particles: Particles = createParticles(stage.fxLayer);
+
+  // --- Render-scoped event-detection caches -------------------------------
+  // Per-player previous alive flag — used to fire death bursts on the
+  // alive→dead transition.
+  const wasAlive = new Map<number, boolean>();
+  // Per-node previous owner — used to fire capture sparks on color change.
+  const prevNodeOwner = new Map<number, Color | null>();
+
+  // Last render timestamp for shake decay (render-scoped, not sim time).
+  let lastRenderMs = performance.now();
+
+  // Base layer offsets — captured so we restore them between shake frames.
+  let baseBgX = stage.bgLayer.x;
+  let baseBgY = stage.bgLayer.y;
+  let baseGlowX = stage.glowLayer.x;
+  let baseGlowY = stage.glowLayer.y;
+  let baseFxX = stage.fxLayer.x;
+  let baseFxY = stage.fxLayer.y;
+  let basesCaptured = false;
+
   /** Lazily grow the players Graphics pool to match world.players.length. */
   const ensurePlayerGraphics = (count: number): void => {
     while (playersGraphics.length < count) {
@@ -132,9 +174,51 @@ export function createWorldRenderer(
     }
   };
 
+  /** Resolve a player's interpolated pixel-space position for this frame. */
+  const playerPosPx = (player: Player, alpha: number, cellSize: number): Vec2 => ({
+    x: lerp(player.prevPos.x, player.pos.x, alpha) * cellSize,
+    y: lerp(player.prevPos.y, player.pos.y, alpha) * cellSize,
+  });
+
   return {
     render(world: World, alpha: number): void {
       const { cellSize } = world.arena;
+
+      // ----- Capture base layer offsets the first frame ------------------
+      // We do this lazily because main.ts sets bg/glow offsets after
+      // construction (arena centering).
+      if (!basesCaptured) {
+        baseBgX = stage.bgLayer.x;
+        baseBgY = stage.bgLayer.y;
+        baseGlowX = stage.glowLayer.x;
+        baseGlowY = stage.glowLayer.y;
+        baseFxX = stage.fxLayer.x;
+        baseFxY = stage.fxLayer.y;
+        basesCaptured = true;
+      }
+
+      // ----- Render-side timing for shake/particles ----------------------
+      const nowMs = performance.now();
+      const dtRender = Math.max(0, Math.min(0.1, (nowMs - lastRenderMs) / 1000));
+      lastRenderMs = nowMs;
+
+      // ----- Apply screen shake (and decay) ------------------------------
+      // Shake is render-scoped: gameplay sets `world.shake` (px), render
+      // reads/decays it. Cosmetic; uses Math.random() — not seeded.
+      const shake = world.shake;
+      if (shake > 0.05) {
+        const ox = (Math.random() * 2 - 1) * shake;
+        const oy = (Math.random() * 2 - 1) * shake;
+        stage.bgLayer.position.set(baseBgX + ox, baseBgY + oy);
+        stage.glowLayer.position.set(baseGlowX + ox, baseGlowY + oy);
+        stage.fxLayer.position.set(baseFxX + ox, baseFxY + oy);
+        world.shake = shake * Math.exp(-SHAKE_DECAY_RATE * dtRender);
+      } else if (world.shake !== 0) {
+        world.shake = 0;
+        stage.bgLayer.position.set(baseBgX, baseBgY);
+        stage.glowLayer.position.set(baseGlowX, baseGlowY);
+        stage.fxLayer.position.set(baseFxX, baseFxY);
+      }
 
       // ----- Arena (one-shot) -------------------------------------------
       if (!arenaDrawn) {
@@ -147,6 +231,28 @@ export function createWorldRenderer(
           arenaPxHeight,
         );
         arenaDrawn = true;
+      }
+
+      // ----- Event detection: deaths + captures -------------------------
+      for (const player of world.players) {
+        const prev = wasAlive.get(player.slot);
+        if (prev === true && !player.alive) {
+          // Death: spawn a burst at the player's last interpolated position.
+          const where = playerPosPx(player, 1, cellSize);
+          particles.spawnDeathBurst(where, COLOR_HEX[player.color]);
+        }
+        wasAlive.set(player.slot, player.alive);
+      }
+      for (const node of world.nodes) {
+        const prev = prevNodeOwner.get(node.id);
+        if (prev !== node.ownerColor && node.ownerColor !== null) {
+          // Capture: sparks in the new owner's color.
+          particles.spawnCaptureSparks(
+            { x: node.pos.x * cellSize, y: node.pos.y * cellSize },
+            COLOR_HEX[node.ownerColor],
+          );
+        }
+        prevNodeOwner.set(node.id, node.ownerColor);
       }
 
       // ----- Nodes ------------------------------------------------------
@@ -198,27 +304,44 @@ export function createWorldRenderer(
         }
 
         if (!player.alive) {
-          // MVP: hide dead players. Particle burst is a future enhancement.
+          // Body hidden; death burst already spawned via event detection.
           g.visible = false;
           continue;
         }
         g.visible = true;
 
-        const px: Vec2 = {
-          x: lerp(player.prevPos.x, player.pos.x, alpha) * cellSize,
-          y: lerp(player.prevPos.y, player.pos.y, alpha) * cellSize,
-        };
+        const px = playerPosPx(player, alpha, cellSize);
         const radiusPx = player.radius * cellSize;
         const hex = colorHex(player.color);
+        const bodyAlpha = ghostBodyAlpha(player, world);
 
         // Body.
-        g.circle(px.x, px.y, radiusPx).fill({ color: hex, alpha: 1 });
+        g.circle(px.x, px.y, radiusPx).fill({ color: hex, alpha: bodyAlpha });
         // Inner highlight — small white core for readability against bloom.
         g.circle(px.x, px.y, radiusPx * PLAYER_HIGHLIGHT_FACTOR).fill({
           color: 0xffffff,
-          alpha: 0.85,
+          alpha: 0.85 * bodyAlpha,
         });
+
+        // Per-frame dash trail spawn — particle system at the player's pos.
+        if (
+          player.ability.phase === 'active' &&
+          (player.characterClass === 'smash' || player.characterClass === 'blade')
+        ) {
+          const trailColor =
+            player.characterClass === 'blade' ? 0xffffaa : COLOR_HEX[player.color];
+          particles.spawnDashTrail(px, trailColor);
+        }
       }
+
+      // ----- Ability FX overlays ---------------------------------------
+      // Sample trail buffer first so dashes can read it on the same frame.
+      abilityFx.sampleTrails(world, (p) => playerPosPx(p, alpha, cellSize));
+      abilityFx.draw(world, (p) => playerPosPx(p, alpha, cellSize));
+
+      // ----- Particles update + draw -----------------------------------
+      particles.update(dtRender);
+      particles.draw();
     },
 
     destroy(): void {
@@ -227,6 +350,14 @@ export function createWorldRenderer(
       lasersGraphics.destroy();
       for (const g of playersGraphics) g.destroy();
       playersGraphics.length = 0;
+      abilityFx.destroy();
+      particles.destroy();
+      wasAlive.clear();
+      prevNodeOwner.clear();
+      // Restore base offsets so a subsequent renderer doesn't inherit shake.
+      stage.bgLayer.position.set(baseBgX, baseBgY);
+      stage.glowLayer.position.set(baseGlowX, baseGlowY);
+      stage.fxLayer.position.set(baseFxX, baseFxY);
     },
   };
 }

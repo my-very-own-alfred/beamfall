@@ -260,6 +260,11 @@ export function updateLaserScheduler(world: World, dt: number): void {
   world.lasers.length = 0;
 
   for (const node of world.nodes) {
+    // Decay the visual flash timer regardless of ownership — purely cosmetic.
+    if (node.flashTimer > 0) {
+      node.flashTimer = Math.max(0, node.flashTimer - dt);
+    }
+
     if (node.ownerColor === null) continue;
 
     const prevPhase = node.phase;

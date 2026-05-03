@@ -143,6 +143,12 @@ export interface LaserNode {
   ownerColor: Color | null;
   pattern: LaserPattern;
   phase: number; // 0..1, advances with beat clock
+  /**
+   * Visual flash timer (seconds) for THIEF capture feedback. Set by
+   * `abilities.ts` `doThiefSwap`, decayed by `laserScheduler.ts` each tick.
+   * Render reads it; gameplay does not branch on it.
+   */
+  flashTimer: number;
 }
 
 export interface LaserSegment {
@@ -197,6 +203,18 @@ export interface World {
   rng: () => number; // seeded PRNG (xoshiro128**)
   /** Seconds until the next pickup spawn check. */
   pickupCooldown: number;
+  /**
+   * Hit-stop timer (seconds). When >0 the world tick skips all gameplay
+   * system updates but continues to decrement this timer. Used to emphasize
+   * impact moments (BLADE/SMASH/SNIPE hits, laser deaths). Deterministic.
+   */
+  hitStopTimer: number;
+  /**
+   * Screen-shake magnitude in CSS pixels. Pure render-scoped feedback; the
+   * world renderer applies the offset and decays this value each frame.
+   * Cosmetic only — not part of the deterministic simulation.
+   */
+  shake: number;
 }
 
 // ---------------------------------------------------------------------------

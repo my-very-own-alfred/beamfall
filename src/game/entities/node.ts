@@ -17,5 +17,6 @@ export function createNode(
     ownerColor: null,
     pattern,
     phase: 0,
+    flashTimer: 0,
   };
 }

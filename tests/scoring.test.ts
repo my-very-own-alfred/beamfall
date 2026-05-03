@@ -18,6 +18,7 @@ function mkPlayer(color: Color, alive: boolean): Player {
     speed: 4,
     ability: { phase: 'idle', charge: 0, activeTimer: 0, marker: null, dashVel: null },
     effects: { stunTimer: 0, speedBoostTimer: 0, invincibleTimer: 0, knockback: { x: 0, y: 0 } },
+    stats: { ultKills: 0, laserKills: 0, deaths: 0, captures: 0, thiefSteals: 0, shockHits: 0, roundsWon: 0 },
   };
 }
 
@@ -37,6 +38,8 @@ function mkWorld(players: Player[], roundTimer: number): World {
     characters: [],
     rng: () => 0.5,
     pickupCooldown: 0,
+    hitStopTimer: 0,
+    shake: 0,
   };
 }
 

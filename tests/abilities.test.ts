@@ -18,6 +18,7 @@ function mkPlayer(slot: 0 | 1 | 2 | 3, color: Color, cls: CharacterClass, x: num
     speed: 4,
     ability: { phase: 'idle', charge: 1, activeTimer: 0, marker: null, dashVel: null },
     effects: { stunTimer: 0, speedBoostTimer: 0, invincibleTimer: 0, knockback: { x: 0, y: 0 } },
+    stats: { ultKills: 0, laserKills: 0, deaths: 0, captures: 0, thiefSteals: 0, shockHits: 0, roundsWon: 0 },
   };
 }
 
@@ -37,6 +38,8 @@ function mkWorld(players: Player[]): World {
     characters: [],
     rng: () => 0.5,
     pickupCooldown: 0,
+    hitStopTimer: 0,
+    shake: 0,
   };
 }
 
@@ -78,8 +81,8 @@ describe('THIEF', () => {
     const caster = mkPlayer(0, 'red', 'thief', 2, 2);
     const w = mkWorld([caster]);
     w.nodes = [
-      { id: 100 as never, pos: { x: 3, y: 2 }, ownerColor: 'blue', pattern: 'sweep', phase: 0 },
-      { id: 101 as never, pos: { x: 2, y: 2.4 }, ownerColor: 'green', pattern: 'sweep', phase: 0 },
+      { id: 100 as never, pos: { x: 3, y: 2 }, ownerColor: 'blue', pattern: 'sweep', phase: 0, flashTimer: 0 },
+      { id: 101 as never, pos: { x: 2, y: 2.4 }, ownerColor: 'green', pattern: 'sweep', phase: 0, flashTimer: 0 },
     ];
     updateAbilities(w, [PWR()], 1 / 120);
     // Closest is the green one (~0.4 away) — should be the swap target.
@@ -91,7 +94,7 @@ describe('THIEF', () => {
     const caster = mkPlayer(0, 'red', 'thief', 2, 2);
     const w = mkWorld([caster]);
     w.nodes = [
-      { id: 100 as never, pos: { x: 7, y: 5 }, ownerColor: 'blue', pattern: 'sweep', phase: 0 },
+      { id: 100 as never, pos: { x: 7, y: 5 }, ownerColor: 'blue', pattern: 'sweep', phase: 0, flashTimer: 0 },
     ];
     updateAbilities(w, [PWR()], 1 / 120);
     expect(w.nodes[0]!.ownerColor).toBe('blue');
