@@ -41,6 +41,18 @@ import {
   saveReplay,
 } from '@/engine/replay';
 import type { Replay, ReplayPlayer, ReplayRecorder } from '@/engine/replay';
+import { ensureAudio, isMuted, playSfx, setMuted } from '@/engine/audio/engine';
+import {
+  getBeatCount,
+  getBeatPhase,
+  getBpm,
+  isMusicRunning,
+  startMusic,
+  stopMusic,
+} from '@/engine/audio/music';
+import type { SfxName } from '@/engine/audio/sfx';
+import { drainEvents } from '@/game/events';
+import type { GameEvent } from '@/game/events';
 import { TICK_HZ } from '@/types';
 import type { InputSnapshot, World } from '@/types';
 
@@ -65,6 +77,18 @@ async function main(): Promise<void> {
   keyboard.attach();
   const gamepad = new GamepadSource();
   gamepad.attach();
+
+  // --- Audio bootstrap -----------------------------------------------------
+  // Browser autoplay policy requires the AudioContext be created from a user
+  // gesture. Hook the first key/click to lazy-init; afterwards a no-op.
+  const unlockAudio = (): void => {
+    ensureAudio();
+  };
+  window.addEventListener('keydown', unlockAudio, { once: false });
+  window.addEventListener('pointerdown', unlockAudio, { once: false });
+
+  // Track game-state transitions for music start/fade.
+  let lastWorldState: World['state'] | null = null;
 
   // --- App state -----------------------------------------------------------
   let appState: AppState = 'menu';
@@ -174,6 +198,70 @@ async function main(): Promise<void> {
     appState = 'lobby';
   };
 
+  // --- Audio helpers --------------------------------------------------------
+  // Populate `world.beat` from the music module each tick. Sim systems read it
+  // (laserScheduler) but never write back — keeps determinism intact.
+  const syncBeat = (w: World): void => {
+    if (isMusicRunning()) {
+      w.beat = { phase: getBeatPhase(), bpm: getBpm(), count: getBeatCount() };
+    } else {
+      // Explicitly clear so sim takes the legacy code path.
+      delete w.beat;
+    }
+  };
+
+  // Watch for round/match boundaries to start/stop music.
+  const handleWorldStateTransition = (w: World): void => {
+    if (lastWorldState !== w.state) {
+      const prev = lastWorldState;
+      lastWorldState = w.state;
+      if (w.state === 'playing' && prev !== 'playing') {
+        startMusic();
+      } else if (w.state === 'roundEnd' || w.state === 'matchEnd') {
+        if (prev === 'playing') stopMusic(w.state === 'matchEnd' ? 1.2 : 0.4);
+      }
+    }
+  };
+
+  // Map a GameEvent to an SFX name. Centralized so the sim never imports SFX.
+  const eventToSfx = (ev: GameEvent): SfxName | null => {
+    switch (ev.kind) {
+      case 'kill':
+        if (ev.cause === 'blade') return 'slash';
+        if (ev.cause === 'snipe') return 'death';
+        return 'death';
+      case 'capture':
+        return 'capture';
+      case 'pickupCollected':
+        return 'pickup';
+      case 'abilityTrigger':
+        switch (ev.class) {
+          case 'smash':
+          case 'blade':
+            return 'dash';
+          case 'shock':
+            return 'zap';
+          case 'ghost':
+            return 'teleport';
+          case 'thief':
+            return 'steal';
+          case 'snipe':
+            return null; // covered by snipeArm/snipeFire
+        }
+        return null;
+      case 'snipeArm':
+        return 'pickup';
+      case 'snipeFire':
+        return 'teleport';
+      case 'roundEnd':
+        return 'roundEnd';
+      case 'matchEnd':
+        return 'matchEnd';
+      case 'countdownTick':
+        return ev.value <= 0 ? 'countdownGo' : 'countdownTick';
+    }
+  };
+
   // --- Loop ----------------------------------------------------------------
   startLoop({
     tickHz: TICK_HZ,
@@ -242,6 +330,9 @@ async function main(): Promise<void> {
           }
         }
       } else if (appState === 'match' && world !== null) {
+        // Mute toggle (M). Edge-triggered.
+        if (keyboard.wasPressed('KeyM')) setMuted(!isMuted());
+
         // Pause toggle. Edge-triggered on Escape OR gamepad Start.
         let pauseEdge = keyboard.wasPressed(KEY_PAUSE);
         if (!pauseEdge) {
@@ -289,12 +380,15 @@ async function main(): Promise<void> {
             // matchEnd transition.
             recorder = null;
             recordingMeta = null;
+            stopMusic();
             teardownPlaySurface();
             world = null;
             openMenu();
           }
         } else {
+          syncBeat(world);
           tickWorld(world, dt);
+          handleWorldStateTransition(world);
 
           if (world.state === 'matchEnd') {
             // Finalize the recording before tearing anything down.
@@ -315,11 +409,14 @@ async function main(): Promise<void> {
           }
         }
       } else if (appState === 'replay' && world !== null && replayPlayer !== null) {
+        syncBeat(world);
         tickWorld(world, dt);
+        handleWorldStateTransition(world);
         // End playback when the recorded inputs run out OR the match has
         // already ended via the recorded sim.
         if (replayPlayer.exhausted() || world.state === 'matchEnd') {
           replayPlayer = null;
+          stopMusic();
           teardownPlaySurface();
           world = null;
           openMenu();
@@ -338,6 +435,16 @@ async function main(): Promise<void> {
     },
     onRender: (alpha: number): void => {
       updateFps();
+      // Drain audio events ONCE per render frame. The drain happens here (not
+      // inside the tick) so multiple ticks per frame coalesce into one batch
+      // dispatch — and so it sits cleanly on the render-side of the boundary.
+      if (world !== null) {
+        const events = drainEvents(world.events);
+        for (const ev of events) {
+          const name = eventToSfx(ev);
+          if (name !== null) playSfx(name);
+        }
+      }
       if (worldRenderer !== null && world !== null) {
         worldRenderer.render(world, alpha);
       }

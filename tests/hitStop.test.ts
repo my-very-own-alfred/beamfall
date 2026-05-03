@@ -44,6 +44,7 @@ function mkWorld(players: Player[]): World {
     pickupCooldown: 0,
     hitStopTimer: 0,
     shake: 0,
+    events: [],
   };
 }
 

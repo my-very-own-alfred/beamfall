@@ -69,6 +69,7 @@ export function updateCollision(world: World): void {
             break;
           }
         }
+        world.events.push({ kind: 'kill', cause: 'laser' });
         // Impact feedback: hit-stop + medium shake on any laser death.
         world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
         world.shake = Math.max(world.shake, 9);

@@ -29,6 +29,7 @@ export function updateNodeActivation(world: World): void {
         // every tick the player is parked on top of an already-owned node.
         if (node.ownerColor !== player.color) {
           player.stats.captures += 1;
+          world.events.push({ kind: 'capture' });
         }
         node.ownerColor = player.color;
       }

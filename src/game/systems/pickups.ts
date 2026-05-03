@@ -112,6 +112,7 @@ export function updatePickups(world: World, dt: number): void {
       const r = player.radius + PICKUP_RADIUS;
       if (dx * dx + dy * dy <= r * r) {
         applyPickup(world, pickup.kind, player.id);
+        world.events.push({ kind: 'pickupCollected', pickup: pickup.kind });
         world.pickups.splice(i, 1);
         break;
       }

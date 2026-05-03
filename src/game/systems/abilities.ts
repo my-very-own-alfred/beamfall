@@ -80,6 +80,7 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
   if (player.characterClass === 'snipe') {
     if (ab.phase === 'armed' && ab.marker !== null) {
       doSnipeTeleport(world, player);
+      world.events.push({ kind: 'snipeFire' });
       return true;
     }
     if (ab.charge < 1) return false;
@@ -87,6 +88,7 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
     ab.marker = { x: player.pos.x, y: player.pos.y };
     ab.activeTimer = spec.params.armWindow;
     ab.charge = 0;
+    world.events.push({ kind: 'snipeArm' });
     return true;
   }
 
@@ -103,6 +105,7 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
         y: heading.y * spec.params.dashSpeed,
       };
       ab.charge = 0;
+      world.events.push({ kind: 'abilityTrigger', class: player.characterClass });
       return true;
     }
     case 'shock': {
@@ -110,12 +113,14 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
       ab.activeTimer = spec.activeDuration;
       ab.charge = 0;
       doShockBurst(world, player);
+      world.events.push({ kind: 'abilityTrigger', class: 'shock' });
       return true;
     }
     case 'ghost': {
       ab.phase = 'active';
       ab.activeTimer = spec.activeDuration;
       ab.charge = 0;
+      world.events.push({ kind: 'abilityTrigger', class: 'ghost' });
       return true;
     }
     case 'thief': {
@@ -124,6 +129,7 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
         ab.phase = 'active';
         ab.activeTimer = spec.activeDuration;
         ab.charge = 0;
+        world.events.push({ kind: 'abilityTrigger', class: 'thief' });
       }
       // If no eligible node was in range, charge is preserved — no waste.
       return swapped;
@@ -207,6 +213,7 @@ function doSnipeTeleport(world: World, caster: Player): void {
       other.alive = false;
       other.stats.deaths += 1;
       caster.stats.ultKills += 1;
+      world.events.push({ kind: 'kill', cause: 'snipe' });
       // Impact: hit-stop + medium shake on kill.
       world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
       world.shake = Math.max(world.shake, 9);
@@ -242,6 +249,7 @@ function resolveDashHits(world: World, attacker: Player): boolean {
         other.alive = false;
         other.stats.deaths += 1;
         attacker.stats.ultKills += 1;
+        world.events.push({ kind: 'kill', cause: 'blade' });
         // BLADE kill: full hit-stop + medium-shake impact.
         world.hitStopTimer = Math.max(world.hitStopTimer, 0.08);
         world.shake = Math.max(world.shake, 9);

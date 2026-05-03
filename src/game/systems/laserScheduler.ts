@@ -255,9 +255,23 @@ function buildSegments(
 /**
  * Clear and repopulate world.lasers based on current node ownership. Called
  * once per tick during the 'playing' state.
+ *
+ * Beat-locking: when `world.beat` is defined, certain patterns align to
+ * musical beats:
+ *   - 'pulse', 'segment-flip': phase is *snapped* to a 2-beat full cycle so
+ *     the on/off (or H/V) toggle lands exactly on beat boundaries.
+ *   - 'sweep', 'rotate': soft 1.15x phase-rate accent during the upbeat half
+ *     of each beat (count % 1 < 0.5).
+ *   - 'zigzag', 'ring', 'pendulum': unchanged (their motion already feels
+ *     fluid; locking them looks robotic).
+ *
+ * If `world.beat` is undefined, behavior is identical to the pre-audio code
+ * path — required for replay determinism on legacy recordings.
  */
 export function updateLaserScheduler(world: World, dt: number): void {
   world.lasers.length = 0;
+
+  const beat = world.beat;
 
   for (const node of world.nodes) {
     // Decay the visual flash timer regardless of ownership — purely cosmetic.
@@ -269,7 +283,19 @@ export function updateLaserScheduler(world: World, dt: number): void {
 
     const prevPhase = node.phase;
     const rateMul = world.laserRateMultiplier ?? 1;
-    const newPhase = wrapPhase(prevPhase + dt * RATES[node.pattern] * rateMul);
+
+    let newPhase: number;
+    if (beat !== undefined && (node.pattern === 'pulse' || node.pattern === 'segment-flip')) {
+      // Snap: full pattern cycle = 2 beats. phase = ((count % 2) + phase-in-beat) / 2.
+      const beatPos = ((beat.count % 2) + beat.phase) / 2;
+      newPhase = wrapPhase(beatPos);
+    } else if (beat !== undefined && (node.pattern === 'sweep' || node.pattern === 'rotate')) {
+      // Soft accent: 1.15x rate on the upbeat half of each beat.
+      const accent = beat.phase < 0.5 ? 1.15 : 1.0;
+      newPhase = wrapPhase(prevPhase + dt * RATES[node.pattern] * rateMul * accent);
+    } else {
+      newPhase = wrapPhase(prevPhase + dt * RATES[node.pattern] * rateMul);
+    }
     node.phase = newPhase;
 
     const segs = buildSegments(node.pos, node.ownerColor, prevPhase, newPhase, node.pattern);

@@ -16,6 +16,7 @@ import { ARENAS, DEFAULT_ARENA_ID } from '@/game/arenas';
 import type { ArenaId } from '@/game/arenas';
 import { createNode } from '@/game/entities/node';
 import { createPlayer } from '@/game/entities/player';
+import type { GameEvent } from '@/game/events';
 import { makeRng } from '@/game/rng';
 import { DEFAULT_CHARACTER } from '@/game/characters';
 import { emptyStats } from '@/game/stats';
@@ -128,6 +129,7 @@ export function createWorld(
     abilityRateMultiplier: 1,
     pickupsEnabled: true,
     chaosTimer: 0,
+    events: [],
   };
 
   return world;
@@ -150,7 +152,17 @@ export function tick(world: World, dt: number): void {
       return;
     }
     case 'countdown': {
+      const before = world.roundTimer;
       world.roundTimer -= dt;
+      // Emit a 'tick' event each whole-second crossing. value counts down:
+      // 3, 2, 1, then 0 (the GO! cue) at zero-crossing.
+      const beforeFloor = Math.ceil(before);
+      const afterFloor = Math.ceil(Math.max(0, world.roundTimer));
+      if (beforeFloor !== afterFloor) {
+        const v = afterFloor;
+        const evList: GameEvent[] = world.events;
+        evList.push({ kind: 'countdownTick', value: v });
+      }
       if (world.roundTimer <= 0) {
         world.state = 'playing';
         world.roundTimer = ROUND_DURATION_SEC;
@@ -193,6 +205,7 @@ export function tick(world: World, dt: number): void {
         }
         world.state = 'roundEnd';
         world.roundTimer = ROUND_END_HOLD_SEC;
+        world.events.push({ kind: 'roundEnd' });
       }
       return;
     }
@@ -204,6 +217,7 @@ export function tick(world: World, dt: number): void {
           world.state = 'matchEnd';
           // Big match-end shake (decayed by render).
           world.shake = Math.max(world.shake, 16);
+          world.events.push({ kind: 'matchEnd' });
         } else startNewRound(world);
       }
       return;

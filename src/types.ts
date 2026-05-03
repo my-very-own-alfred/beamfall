@@ -2,6 +2,8 @@
 // Load-bearing: imported by engine, game systems, render, input, and audio modules.
 // Do not change names or signatures without coordinating with all consumers.
 
+import type { GameEvent } from '@/game/events';
+
 // ---------------------------------------------------------------------------
 // Brand types for safety
 // ---------------------------------------------------------------------------
@@ -230,6 +232,22 @@ export interface World {
    * node's pattern is reassigned via world.rng(). 0 disables the effect.
    */
   chaosTimer?: number;
+  /**
+   * Per-tick gameplay event queue. Systems append; the host drains in render.
+   * Replay system reproduces audio by replaying the queue produced by an
+   * identical sim run. Gameplay must not branch on its own events.
+   */
+  events: GameEvent[];
+  /**
+   * Optional beat info supplied by the host audio module. Read-only from the
+   * sim's perspective: gameplay systems may use this to align laser scheduling
+   * to musical beats, but never write back. When `undefined`, all systems must
+   * behave as before (preserves replay determinism for older recordings).
+   *   - phase: [0, 1) within the current beat.
+   *   - bpm:   beats per minute.
+   *   - count: monotonic beat counter since music started.
+   */
+  beat?: { phase: number; bpm: number; count: number };
 }
 
 // ---------------------------------------------------------------------------

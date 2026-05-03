@@ -40,6 +40,7 @@ function mkWorld(players: Player[], roundTimer: number): World {
     pickupCooldown: 0,
     hitStopTimer: 0,
     shake: 0,
+    events: [],
   };
 }
 
