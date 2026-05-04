@@ -26,7 +26,19 @@ const RATES: Record<LaserPattern, number> = {
   zigzag: 0.55,
   ring: 0.45,
   pendulum: 0.4,
+  'cross-rotate': 0.3,
+  spiral: 0.6,
+  wave: 0.7,
+  star: 0.55,
 };
+
+const CROSS_LENGTH = 3.5;
+const SPIRAL_LENGTH = 3.5;
+const WAVE_LENGTH = 4;
+const WAVE_AMPLITUDE = 1.2;
+const WAVE_SAMPLES = 12; // segments approximating the curve
+const STAR_LENGTH = 3;
+const STAR_ARMS = 5;
 
 /** Beam half-length (radial patterns) or full-length (axis patterns). */
 const SWEEP_LENGTH = 3;
@@ -248,6 +260,97 @@ function buildSegments(
           origin.y + Math.sin(pa) * PENDULUM_LENGTH,
         ),
       ];
+    }
+    case 'cross-rotate': {
+      // 4 perpendicular arms rotating together. Heavy area coverage.
+      const a = newPhase * TWO_PI;
+      const pa = prevPhase * TWO_PI;
+      const segs: LaserSegment[] = [];
+      for (let k = 0; k < 4; k++) {
+        const off = (k * Math.PI) / 2;
+        segs.push(
+          makeSeg(
+            allocLaserId(),
+            ownerColor,
+            origin.x,
+            origin.y,
+            origin.x + Math.cos(a + off) * CROSS_LENGTH,
+            origin.y + Math.sin(a + off) * CROSS_LENGTH,
+            origin.x,
+            origin.y,
+            origin.x + Math.cos(pa + off) * CROSS_LENGTH,
+            origin.y + Math.sin(pa + off) * CROSS_LENGTH,
+          ),
+        );
+      }
+      return segs;
+    }
+    case 'spiral': {
+      // One arm whose length grows with phase while rotating; wraps & resets.
+      const turns = 2.5; // angular turns per cycle
+      const a = newPhase * TWO_PI * turns;
+      const pa = prevPhase * TWO_PI * turns;
+      const len = SPIRAL_LENGTH * (0.3 + 0.7 * newPhase);
+      const plen = SPIRAL_LENGTH * (0.3 + 0.7 * prevPhase);
+      return [
+        makeSeg(
+          allocLaserId(),
+          ownerColor,
+          origin.x,
+          origin.y,
+          origin.x + Math.cos(a) * len,
+          origin.y + Math.sin(a) * len,
+          origin.x,
+          origin.y,
+          origin.x + Math.cos(pa) * plen,
+          origin.y + Math.sin(pa) * plen,
+        ),
+      ];
+    }
+    case 'wave': {
+      // Horizontal beam approximated by N short segments where y is sin-modulated.
+      // The wave travels along x as phase advances. Visually a moving sine.
+      const segs: LaserSegment[] = [];
+      const k = TWO_PI * 1.4; // wavenumber (peaks per unit length)
+      const phaseOffset = newPhase * TWO_PI;
+      const prevPhaseOffset = prevPhase * TWO_PI;
+      for (let i = 0; i < WAVE_SAMPLES; i++) {
+        const t0 = i / WAVE_SAMPLES;
+        const t1 = (i + 1) / WAVE_SAMPLES;
+        const x0 = origin.x - WAVE_LENGTH + 2 * WAVE_LENGTH * t0;
+        const x1 = origin.x - WAVE_LENGTH + 2 * WAVE_LENGTH * t1;
+        const y0 = origin.y + Math.sin(t0 * 2 * WAVE_LENGTH * k + phaseOffset) * WAVE_AMPLITUDE;
+        const y1 = origin.y + Math.sin(t1 * 2 * WAVE_LENGTH * k + phaseOffset) * WAVE_AMPLITUDE;
+        const py0 = origin.y + Math.sin(t0 * 2 * WAVE_LENGTH * k + prevPhaseOffset) * WAVE_AMPLITUDE;
+        const py1 = origin.y + Math.sin(t1 * 2 * WAVE_LENGTH * k + prevPhaseOffset) * WAVE_AMPLITUDE;
+        segs.push(makeSeg(allocLaserId(), ownerColor, x0, y0, x1, y1, x0, py0, x1, py1));
+      }
+      return segs;
+    }
+    case 'star': {
+      // 5 fixed-angle arms; each arm pulses on/off in a phased rotation around
+      // the star so it looks like a chasing star. Two arms active at any time.
+      const segs: LaserSegment[] = [];
+      for (let k = 0; k < STAR_ARMS; k++) {
+        const armPhase = wrapPhase(newPhase - k / STAR_ARMS);
+        if (armPhase >= 0.4) continue; // arm is "off" 60% of the time
+        const angle = (k / STAR_ARMS) * TWO_PI;
+        segs.push(
+          makeSeg(
+            allocLaserId(),
+            ownerColor,
+            origin.x,
+            origin.y,
+            origin.x + Math.cos(angle) * STAR_LENGTH,
+            origin.y + Math.sin(angle) * STAR_LENGTH,
+            origin.x,
+            origin.y,
+            origin.x + Math.cos(angle) * STAR_LENGTH,
+            origin.y + Math.sin(angle) * STAR_LENGTH,
+          ),
+        );
+      }
+      return segs;
     }
   }
 }

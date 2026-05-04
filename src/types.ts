@@ -137,7 +137,11 @@ export type LaserPattern =
   | 'segment-flip'
   | 'zigzag'
   | 'ring'
-  | 'pendulum';
+  | 'pendulum'
+  | 'cross-rotate' // 4 perpendicular beams rotating in unison
+  | 'spiral' // single arm whose endpoint spirals outward then resets
+  | 'wave' // horizontal beam offset by sin (curvy traveling wave)
+  | 'star'; // 5 arms at fixed angles pulsing on/off
 
 export interface LaserNode {
   id: EntityId;
