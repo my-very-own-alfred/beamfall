@@ -209,6 +209,28 @@ Critical invariants preserved across all changes:
 - [ ] **v0.5** — visual polish (particles, screen shake, neon trails, kill cam flashes).
 - [ ] **v1.0** — signed Win/Mac builds, GitHub releases, itch.io.
 
+## Agent orchestration (agentic-config)
+
+This project uses [WaterplanAI/agentic-config](https://github.com/WaterplanAI/agentic-config) v0.3.0 (Claude Code plugin marketplace) for multi-agent workflows. Installed plugins (user scope):
+
+- **`ac-workflow`** — pimux-backed orchestration (`ac-workflow-mux`, `-ospec`, `-roadmap`). Use for multi-phase work.
+- **`ac-safety`** — credential-leak, write-scope, destructive-bash, supply-chain, playwright guardrails.
+- **`ac-audit`** — JSONL append-only tool log. Survives agent crashes; check after a long parallel run.
+- **`ac-git`** — git/PR/release automation skills.
+- **`ac-qa`** — QA + browser automation for smoke tests against built bundles.
+
+When picking up this repo:
+1. Verify install with `claude plugin list` (should show all 5 enabled).
+2. For multi-feature dispatches (e.g. "ship X, Y, Z in parallel"), use `ac-workflow-mux-roadmap` instead of raw `Agent` tool calls. It handles tmux scope per agent so they don't fight on `types.ts`/`world.ts`/`main.ts`.
+3. Background agents need `--dangerously-skip-permissions` to actually execute (they can't surface permission prompts). Limit those sessions to project-scoped dirs, not `$HOME`.
+4. `ac-audit` writes to a JSONL log — read it with `cat` if you need a post-mortem of what a failed agent actually did.
+
+**Why we adopted it (lessons from the v0.3 sprint):**
+- Plain `Agent` tool worktree isolation failed (parent process not in a git repo). MUX is tmux-based and doesn't need worktrees.
+- "Te aviso cuando termine" doesn't work — agent results stay buried until the user opens a turn. MUX has built-in status surfacing.
+- We caught a black-screen Windows build only when the user installed it. With `ac-qa` + a Playwright smoke against `npm run preview`, we'd catch CSP/init errors pre-release.
+- An agent ran `pip install --break-system-packages` unchallenged. `ac-safety` blocks that.
+
 ## Provenance & licensing
 
 - MIT. Clean-room. **No assets, code, or content from Laser League.** Inspiration only — that game is delisted and not redistributable. Keep this clean if you generate or import anything.
