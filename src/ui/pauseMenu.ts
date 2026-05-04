@@ -7,7 +7,7 @@
 // Driven UI: the integrator polls input via hooks and reads `pick()` to detect
 // the user's chosen action exactly once per confirm.
 
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text } from 'pixi.js';
 
 export type PauseChoice = 'resume' | 'restart' | 'menu';
 
@@ -59,7 +59,16 @@ export function createPauseMenu(parent: Container, hooks: PauseMenuHooks): Pause
   title.anchor.set(0.5);
   root.addChild(title);
 
-  const optionTexts: Text[] = OPTIONS.map((opt) => {
+  // Same pattern as the main menu: each option is a Container with a generous
+  // invisible hit area. Hover changes selection, click commits.
+  const HIT_W = 480;
+  const HIT_H = 48;
+
+  const optionContainers: Container[] = OPTIONS.map((opt, idx) => {
+    const c = new Container();
+    c.eventMode = 'static';
+    c.cursor = 'pointer';
+    c.hitArea = new Rectangle(-HIT_W / 2, -HIT_H / 2, HIT_W, HIT_H);
     const t = new Text({
       text: `  ${OPTION_LABEL[opt]}`,
       style: {
@@ -70,9 +79,24 @@ export function createPauseMenu(parent: Container, hooks: PauseMenuHooks): Pause
       },
     });
     t.anchor.set(0.5);
-    root.addChild(t);
-    return t;
+    c.addChild(t);
+    c.on('pointerover', () => {
+      selected = idx;
+    });
+    c.on('pointerdown', () => {
+      const choice = OPTIONS[idx];
+      if (choice !== undefined && pendingChoice === null) pendingChoice = choice;
+    });
+    root.addChild(c);
+    return c;
   });
+
+  const optionText = (i: number): Text | null => {
+    const c = optionContainers[i];
+    if (!c) return null;
+    const t = c.children[0];
+    return t instanceof Text ? t : null;
+  };
 
   let selected = 0;
   let pendingChoice: PauseChoice | null = null;
@@ -118,16 +142,18 @@ export function createPauseMenu(parent: Container, hooks: PauseMenuHooks): Pause
 
     const optionsTop = viewportH / 2 + 20;
     const optionGap = 56;
-    for (let i = 0; i < optionTexts.length; i++) {
-      const t = optionTexts[i];
+    for (let i = 0; i < optionContainers.length; i++) {
+      const c = optionContainers[i];
+      if (!c) continue;
+      const t = optionText(i);
       if (!t) continue;
       const opt = OPTIONS[i];
       if (opt === undefined) continue;
       const isSelected = i === selected;
       t.text = isSelected ? `> ${OPTION_LABEL[opt]}` : `  ${OPTION_LABEL[opt]}`;
       t.style.fill = isSelected ? 0xffffff : 0x666666;
-      t.x = viewportW / 2;
-      t.y = optionsTop + i * optionGap;
+      c.x = viewportW / 2;
+      c.y = optionsTop + i * optionGap;
     }
   };
 

@@ -190,10 +190,16 @@ export function createStatsScreen(
   });
 
   const footer = new Text({
-    text: 'Press Start / Enter to return to lobby',
+    text: 'Click here  ·  Press Start / Enter to return to lobby',
     style: { fontFamily: 'monospace', fontSize: 16, fill: 0xaaaaaa, align: 'center' },
   });
   footer.anchor.set(0.5, 0);
+  // Make the whole footer clickable. Pixi v8: enable eventMode and a hit area.
+  footer.eventMode = 'static';
+  footer.cursor = 'pointer';
+  footer.on('pointerdown', () => { restart = true; });
+  footer.on('pointerover', () => { footer.style.fill = 0xffffff; });
+  footer.on('pointerout', () => { footer.style.fill = 0xaaaaaa; });
   root.addChild(footer);
 
   let restart = false;

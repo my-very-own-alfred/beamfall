@@ -4,7 +4,7 @@
 // or gamepad A. Like the lobby, this UI is driven — input ownership stays with
 // the integrator via edge-triggered query hooks.
 
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Rectangle, Text } from 'pixi.js';
 import { hasStoredReplay } from '@/engine/replay';
 
 const NEON_COLORS = [0xff3344, 0x3388ff, 0xffdd33, 0x33dd66] as const;
@@ -90,7 +90,17 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
   version.anchor.set(0.5, 1);
   root.addChild(version);
 
-  const optionTexts: Text[] = OPTIONS.map((opt) => {
+  // Each option is a Container (text + invisible hit area) so it can be
+  // clicked / hovered. We expand the hit area horizontally so the click
+  // target is generous — the small text glyphs alone would be a nightmare.
+  const OPTION_HIT_W = 480;
+  const OPTION_HIT_H = 48;
+
+  const optionContainers: Container[] = OPTIONS.map((opt, idx) => {
+    const c = new Container();
+    c.eventMode = 'static';
+    c.cursor = 'pointer';
+    c.hitArea = new Rectangle(-OPTION_HIT_W / 2, -OPTION_HIT_H / 2, OPTION_HIT_W, OPTION_HIT_H);
     const t = new Text({
       text: `  ${OPTION_LABEL[opt]}`,
       style: {
@@ -101,9 +111,29 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
       },
     });
     t.anchor.set(0.5, 0.5);
-    root.addChild(t);
-    return t;
+    c.addChild(t);
+    // Hover → set this option as the selected highlight (visual + commit on click).
+    c.on('pointerover', () => {
+      selected = idx;
+    });
+    c.on('pointerdown', () => {
+      const replayAvailable = hasStoredReplay();
+      const choice = OPTIONS[idx];
+      if (choice === undefined) return;
+      if (choice === 'replay' && !replayAvailable) return; // greyed-out, ignore
+      if (pendingChoice === null) pendingChoice = choice;
+    });
+    root.addChild(c);
+    return c;
   });
+
+  // Helper to get the inner Text for layout/style updates.
+  const optionText = (i: number): Text | null => {
+    const c = optionContainers[i];
+    if (!c) return null;
+    const t = c.children[0];
+    return t instanceof Text ? t : null;
+  };
 
   let selected = 0;
   let pendingChoice: MenuChoice | null = null;
@@ -173,8 +203,10 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
 
     const optionsTop = viewportH / 3 + 140;
     const optionGap = 56;
-    for (let i = 0; i < optionTexts.length; i++) {
-      const t = optionTexts[i];
+    for (let i = 0; i < optionContainers.length; i++) {
+      const c = optionContainers[i];
+      if (!c) continue;
+      const t = optionText(i);
       if (!t) continue;
       const opt = OPTIONS[i];
       if (opt === undefined) continue;
@@ -184,8 +216,12 @@ export function createMenu(parent: Container, hooks: MenuHooks): Menu {
       // Disabled option: dim grey regardless of selection so the user can see
       // it can't be picked. Otherwise selected = white, unselected = grey.
       t.style.fill = disabled ? 0x333333 : isSelected ? 0xffffff : 0x666666;
-      t.x = viewportW / 2;
-      t.y = optionsTop + i * optionGap;
+      // Position the container — Text inside is anchored at (0.5, 0.5) so
+      // it auto-centers; the hit area Rectangle is centered around the same.
+      c.x = viewportW / 2;
+      c.y = optionsTop + i * optionGap;
+      c.cursor = disabled ? 'default' : 'pointer';
+      c.eventMode = disabled ? 'auto' : 'static';
     }
   };
 
