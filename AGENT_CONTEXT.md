@@ -139,29 +139,49 @@ Vitest harness wired in. `npm run test`. Covers:
 
 Add tests for any new system — pure functions over `World` make this cheap.
 
-## What's done at v0.2.0
+## v0.3 additions (this development sprint)
 
-- Fixed-timestep loop, 120/60.
+Five clusters shipped in sequence. All commits land on `main`:
+- `5502ff3` **CI** — `.github/workflows/ci.yml`: typecheck/test/build on push and PR (Node 20, ubuntu-latest).
+- `ad9857d` **Content** — 3 new arenas (`wide12x6`, `tall6x10`, `cross10x10`) + 3 new patterns (`zigzag`, `ring`, `pendulum`) + Tab to cycle in lobby. Registry in `src/game/arenas/index.ts`.
+- `896f281` **Game feel** — `src/engine/render/abilityFx.ts` (SHOCK ring, SNIPE marker line, GHOST flicker, BLADE/SMASH trails, THIEF flash via new `LaserNode.flashTimer`) + HUD ability gauge (80×6 bar + class badge, pulses on SNIPE armed) + hit-stop (`World.hitStopTimer`, freezes systems for 80ms on impact) + screen shake (`World.shake`, render-decayed) + particles (`src/engine/render/particles.ts`).
+- `7034dfa` **Pause/replay/mutators** — `src/ui/pauseMenu.ts` (Esc/Start), `src/engine/replay.ts` (24-bit packed snapshot encoding, localStorage persistence, AppState 'replay'), `src/game/mutators.ts` (5 mutators: fastSpeed, sluggishLasers, instantCharge, noPickups, chaosNodes; toggle 1-5 in lobby).
+- `44e3a76` **Audio** — `src/engine/audio/{engine,sfx,music}.ts`: lazy AudioContext, 12 synthesized SFX (no assets), 130 BPM step-sequencer, beat-locked lasers via optional `world.beat`. Game-event sink in `src/game/events.ts` keeps gameplay pure (events queue drained render-side and dispatched to `playSfx`). 'M' to mute.
+
+Critical invariants preserved across all changes:
+- Determinism: gameplay sim never reads wall-clock or audio. `world.beat` is read-only from gameplay's view; absent → byte-identical to baseline.
+- Replay seed flows createWorld → makeRng. The only `Date.now()` in sim code is the seed fallback when no explicit seed is passed (replays always pass one).
+- World additions (`hitStopTimer`, `shake`, `events`, `laserRateMultiplier`, `abilityRateMultiplier`, `pickupsEnabled`, `chaosTimer`, `beat`) are optional/defaulted. Old constructors keep working.
+
+## What's done at v0.3 (cumulative)
+
+- Fixed-timestep loop, 120/60, with deterministic replay support.
 - Keyboard + gamepad input, 4 slots, lobby claim flow.
-- One arena (`grid8x6`) seeded with all 4 laser patterns.
+- 4 arenas, 7 laser patterns.
 - Round/match scoring, last-color-standing → first to 5 wins.
 - 6 character classes with full ability state machines and physics.
 - 3 power-up kinds, RNG-spawned with seed determinism.
 - Per-player stats tracking + post-match MVP screen.
-- HUD (round/timer/scores) + state overlays (countdown / round end / match end).
+- HUD (round/timer/scores/ability gauge) + state overlays.
+- Pause menu (Resume / Restart Round / Return to Menu).
+- Match modifiers (5 mutators, lobby toggle, localStorage persistence).
+- Deterministic replay system (record + playback from main menu).
+- Ability VFX (SHOCK ring, SNIPE line, GHOST flicker, dash trails, THIEF flash).
+- Hit-stop, screen shake, particle bursts.
+- Audio: 12 synthesized SFX, beat-synced procedural music, beat-locked laser scheduler.
 - Polished menu with neon decor + version line.
 - Bloom post-process.
-- Vitest harness, ~25 tests across scoring/abilities/stats.
+- 7 test files / 40 passing tests.
 
-## What's NOT done (don't be surprised)
+## What's NOT done
 
-- **No real art.** All shapes. `src/assets/` is empty on purpose.
-- **No audio.** `src/engine/audio/` is a placeholder dir for v0.4.
-- **No render-side feedback for abilities** — there's no visible aura for SHOCK, no marker line for SNIPE, no dash trail. The mechanics work; the reads don't yet. Add to the world renderer (`src/engine/render/world.ts`) before v0.3.
-- **No HUD ability gauge.** Players have no on-screen indicator of their charge bar. Trivial addition to `src/ui/hud.ts` — read `world.players[i].ability.charge` and draw a bar near each score box.
-- **No controller rebinding UI.** Roadmap v0.3.
+- **No real art.** All shapes/synthesized geometry. `src/assets/` is empty on purpose.
+- **No controller rebinding UI.** Roadmap v0.4.
 - **No netcode.** Won't be added without an explicit decision (see decision #4).
-- **One arena.** More are content-only; arena spec is data in `arenas/grid8x6.ts`.
+- **No menu music or mid-round audio transitions.** Music starts at round-begin only.
+- **No SFX volume slider, no per-player audio panning.** Master mute toggle ('M') only.
+- **No replay scrubbing or pause during playback.** Plays start to finish.
+- **Pre-existing TS errors in `src/game/systems/abilities.ts`** under `noUncheckedIndexedAccess` — predate this sprint, none of the new code adds errors. Worth a cleanup pass.
 - **SMASH does not credit ult kills directly** when knocking a target into a laser — by design. Don't "fix" this without discussing the score-weight implications.
 
 ## Conventions
