@@ -86,7 +86,7 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
     if (ab.charge < 1) return false;
     ab.phase = 'armed';
     ab.marker = { x: player.pos.x, y: player.pos.y };
-    ab.activeTimer = spec.params.armWindow;
+    ab.activeTimer = spec.params.armWindow ?? 0;
     ab.charge = 0;
     world.events.push({ kind: 'snipeArm' });
     return true;
@@ -101,8 +101,8 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
       ab.phase = 'active';
       ab.activeTimer = spec.activeDuration;
       ab.dashVel = {
-        x: heading.x * spec.params.dashSpeed,
-        y: heading.y * spec.params.dashSpeed,
+        x: heading.x * (spec.params.dashSpeed ?? 0),
+        y: heading.y * (spec.params.dashSpeed ?? 0),
       };
       ab.charge = 0;
       world.events.push({ kind: 'abilityTrigger', class: player.characterClass });
@@ -144,13 +144,13 @@ function tryTrigger(world: World, player: Player, snap: InputSnapshot | undefine
  */
 function doShockBurst(world: World, caster: Player): void {
   const spec = CHARACTER_SPECS.shock;
-  const r2 = SQ(spec.params.radius);
+  const r2 = SQ(spec.params.radius ?? 0);
   for (const other of world.players) {
     if (other.id === caster.id) continue;
     if (!other.alive) continue;
     if (other.color === caster.color) continue;
     if (dist2(other.pos, caster.pos) <= r2) {
-      other.effects.stunTimer = Math.max(other.effects.stunTimer, spec.params.stunDuration);
+      other.effects.stunTimer = Math.max(other.effects.stunTimer, spec.params.stunDuration ?? 0);
       other.ability.charge = 0;
       other.ability.phase = 'idle';
       other.ability.activeTimer = 0;
@@ -170,7 +170,7 @@ const THIEF_FLASH_DURATION = 0.35;
  */
 function doThiefSwap(world: World, caster: Player): boolean {
   const spec = CHARACTER_SPECS.thief;
-  const r2 = SQ(spec.params.range);
+  const r2 = SQ(spec.params.range ?? 0);
   let bestD = Infinity;
   let bestIdx = -1;
   for (let i = 0; i < world.nodes.length; i++) {
@@ -233,7 +233,7 @@ function doSnipeTeleport(world: World, caster: Player): void {
  */
 function resolveDashHits(world: World, attacker: Player): boolean {
   const spec = CHARACTER_SPECS[attacker.characterClass];
-  const dashRadius = spec.params.dashRadius;
+  const dashRadius = spec.params.dashRadius ?? 0;
   let hit = false;
 
   for (const other of world.players) {
@@ -261,7 +261,7 @@ function resolveDashHits(world: World, attacker: Player): boolean {
           if (len > 0.001) {
             const nx = dv.x / len;
             const ny = dv.y / len;
-            const imp = spec.params.knockbackImpulse;
+            const imp = spec.params.knockbackImpulse ?? 0;
             other.effects.knockback.x = nx * imp;
             other.effects.knockback.y = ny * imp;
           }
