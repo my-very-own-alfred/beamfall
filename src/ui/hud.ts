@@ -129,17 +129,37 @@ export function createHud(parent: Container): Hud {
 
   let lastOverlayKey = '';
 
+  // Item #8: caches to skip redundant per-frame work.
+  // Score boxes only re-position on viewport change; score text only
+  // re-assigns when the underlying score changes. The timer text only
+  // re-assigns when its ceil(seconds) value changes (1Hz vs 60Hz). The round
+  // number text only re-assigns on round change.
+  let lastViewportW = -1;
+  let lastViewportH = -1;
+  const lastScores: Record<Color, number> = { red: -1, blue: -1, yellow: -1, green: -1 };
+  let lastTimerSec = Number.NaN;
+  let lastRoundNumber = -1;
+
   const update = (world: World, viewportW: number, viewportH: number): void => {
-    // --- Score boxes positioning ---------------------------------------------
+    const viewportChanged = viewportW !== lastViewportW || viewportH !== lastViewportH;
+
+    // --- Score boxes positioning + text -------------------------------------
     for (const box of scoreBoxes) {
       const corner = CORNER_BY_COLOR[box.color];
-      const { x, y } = cornerXY(corner, viewportW, viewportH);
-      box.root.x = x;
-      box.root.y = y;
-      box.label.text = String(world.scores[box.color] ?? 0);
-      // Center the number within the box.
-      box.label.x = SCORE_BOX_W / 2;
-      box.label.y = SCORE_BOX_H / 2;
+      if (viewportChanged) {
+        const { x, y } = cornerXY(corner, viewportW, viewportH);
+        box.root.x = x;
+        box.root.y = y;
+        // Center the number within the box (fixed; cheap to re-assert on
+        // viewport change).
+        box.label.x = SCORE_BOX_W / 2;
+        box.label.y = SCORE_BOX_H / 2;
+      }
+      const newScore = world.scores[box.color] ?? 0;
+      if (newScore !== lastScores[box.color]) {
+        box.label.text = String(newScore);
+        lastScores[box.color] = newScore;
+      }
 
       // --- Ability charge gauge under the score box -----------------------
       // Gauges are anchored differently per corner:
@@ -183,20 +203,31 @@ export function createHud(parent: Container): Hud {
     }
 
     // --- Round timer + round number -----------------------------------------
-    timer.text = formatTimer(world.roundTimer);
-    timer.x = viewportW / 2;
-    timer.y = 12;
+    const timerSec = Math.max(0, Math.ceil(world.roundTimer));
+    if (timerSec !== lastTimerSec) {
+      timer.text = formatTimer(world.roundTimer);
+      lastTimerSec = timerSec;
+    }
+    if (viewportChanged) {
+      timer.x = viewportW / 2;
+      timer.y = 12;
+    }
 
-    roundNumber.text = `Round ${world.roundNumber}`;
-    roundNumber.x = viewportW / 2;
-    roundNumber.y = 12 + 48 + 4;
+    if (world.roundNumber !== lastRoundNumber) {
+      roundNumber.text = `Round ${world.roundNumber}`;
+      lastRoundNumber = world.roundNumber;
+    }
+    if (viewportChanged) {
+      roundNumber.x = viewportW / 2;
+      roundNumber.y = 12 + 48 + 4;
+    }
 
     // --- State overlay -------------------------------------------------------
     const overlayKey = computeOverlayKey(world);
     if (overlayKey !== lastOverlayKey) {
       applyOverlay(overlay, overlayDim, overlayPrimary, overlaySecondary, world, viewportW, viewportH);
       lastOverlayKey = overlayKey;
-    } else {
+    } else if (viewportChanged) {
       // Even when the key didn't change, viewport may have, so re-center.
       reflowOverlay(overlayDim, overlayPrimary, overlaySecondary, viewportW, viewportH);
     }
@@ -204,6 +235,11 @@ export function createHud(parent: Container): Hud {
     // Countdown number can change frame to frame; keep it fresh.
     if (world.state === 'countdown') {
       overlayPrimary.text = formatCountdown(world.roundTimer);
+    }
+
+    if (viewportChanged) {
+      lastViewportW = viewportW;
+      lastViewportH = viewportH;
     }
   };
 
