@@ -83,6 +83,22 @@ function allocId(): EntityId {
 }
 
 /**
+ * Item #6: read a seed from the page URL (?seed=12345). Returns null when not
+ * in a browser context, when the param is absent, or when it does not parse
+ * to a finite integer. Kept local so non-browser test harnesses can call
+ * createWorld without DOM.
+ */
+function readSeedFromUrl(): number | null {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') {
+    return null;
+  }
+  const raw = new URLSearchParams(window.location.search).get('seed');
+  if (raw === null) return null;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
  * Construct a fresh World. `characters` is parallel to `bindings`; missing
  * entries fall back to DEFAULT_CHARACTER.
  */
@@ -94,8 +110,14 @@ export function createWorld(
 ): World {
   const arenaFactory = ARENAS[arenaId] ?? ARENAS[DEFAULT_ARENA_ID];
   const arena = arenaFactory();
-  const actualSeed = seed ?? Date.now();
+  // Item #6: seed selection. Explicit `seed` arg wins, otherwise a `?seed=N`
+  // URL param (parseable int) is honored, else Date.now(). The chosen seed is
+  // stored on world.seed so it can be surfaced to UI and serialized for
+  // replays / debug.
+  const actualSeed = seed ?? readSeedFromUrl() ?? Date.now();
   const rng = makeRng(actualSeed);
+  // eslint-disable-next-line no-console
+  console.info('[world] seed:', actualSeed);
 
   const players = bindings.map((_b, idx) => {
     const slot = idx as PlayerSlot;
@@ -121,6 +143,7 @@ export function createWorld(
     bindings: bindings.slice(),
     characters: characters.slice(),
     rng,
+    seed: actualSeed,
     pickupCooldown: PICKUP_FIRST_SPAWN_SEC,
     hitStopTimer: 0,
     shake: 0,

@@ -207,6 +207,8 @@ export interface World {
   bindings: PlayerBinding[];
   characters: CharacterClass[]; // parallel to bindings
   rng: () => number; // seeded PRNG (xoshiro128**)
+  /** Effective seed used to construct rng. Surfaced for replays/debug. */
+  readonly seed: number;
   /** Seconds until the next pickup spawn check. */
   pickupCooldown: number;
   /**
