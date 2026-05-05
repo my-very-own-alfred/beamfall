@@ -418,7 +418,14 @@ async function main(): Promise<void> {
           }
         } else {
           syncBeat(world);
-          tickWorld(world, dt);
+          // Item #9: build snapshots at the call site so the input boundary
+          // is explicit. Recording is captured here too (only for live play,
+          // not replay). The legacy setInputProvider registration is still
+          // installed above as a fallback for code paths that don't pass
+          // snapshots explicitly (notably tests).
+          const snapshots = buildSnapshots(world.bindings, keyboard, gamepad);
+          if (recorder !== null) recorder.record(snapshots);
+          tickWorld(world, dt, snapshots);
           handleWorldStateTransition(world);
 
           if (world.state === 'matchEnd') {

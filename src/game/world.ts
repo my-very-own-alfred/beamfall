@@ -166,8 +166,14 @@ export function createWorld(
  * effects runs first to decay knockback/timers before movement reads them.
  * abilities runs before movement so dash velocities apply this same tick.
  * pickups runs after collision so a player who died this tick can't grab one.
+ *
+ * Item #9: input boundary made explicit. Callers can pass `inputSnapshots`
+ * directly; when omitted the legacy `setInputProvider` registration is used.
+ * Live game callers (main.ts) pass explicitly so the input source for each
+ * tick is unambiguous at the call site. Tests / replay still use the
+ * provider for backward compatibility.
  */
-export function tick(world: World, dt: number): void {
+export function tick(world: World, dt: number, inputSnapshots?: InputSnapshot[]): void {
   world.tickCount++;
 
   switch (world.state) {
@@ -201,7 +207,7 @@ export function tick(world: World, dt: number): void {
         return;
       }
 
-      const snapshots = inputProvider();
+      const snapshots = inputSnapshots ?? inputProvider();
       updateEffects(world, dt);
       updateAbilities(world, snapshots, dt);
       updateMovement(world, snapshots, dt);
