@@ -3,6 +3,10 @@
 // speed-boost effects, and dash velocity from BLADE/SMASH abilities.
 // Run order: AFTER updateEffects (which decays knockback) and AFTER
 // updateAbilities (which sets dashVel for the active dash window).
+//
+// Hot-path: prevPos / vel are mutated in place (never reassigned) to avoid
+// allocating fresh Vec2 objects every tick. At 120 Hz with 4 players that's
+// ~960 obj/s avoided just here.
 
 import type { InputSnapshot, World } from '@/types';
 
@@ -19,7 +23,8 @@ export function updateMovement(
   for (const player of world.players) {
     if (!player.alive) continue;
 
-    player.prevPos = { x: player.pos.x, y: player.pos.y };
+    player.prevPos.x = player.pos.x;
+    player.prevPos.y = player.pos.y;
 
     // If a dash is active, that velocity overrides input — feels punchy and
     // commits the player to the line they chose at trigger time.
@@ -36,7 +41,8 @@ export function updateMovement(
     } else {
       const snap = snapshots[player.slot];
       if (!snap) {
-        player.vel = { x: 0, y: 0 };
+        player.vel.x = 0;
+        player.vel.y = 0;
         continue;
       }
       const speed =
@@ -45,7 +51,8 @@ export function updateMovement(
       vy = snap.axisY * speed;
     }
 
-    player.vel = { x: vx, y: vy };
+    player.vel.x = vx;
+    player.vel.y = vy;
 
     let nx = player.pos.x + vx * dt;
     let ny = player.pos.y + vy * dt;
