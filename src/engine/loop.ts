@@ -16,6 +16,13 @@ export interface LoopOptions {
   onPollInputs: () => void;
   /** Called for each fixed-step that fits in the accumulator. `dt` is constant (1 / tickHz). */
   onTick: (dt: number) => void;
+  /**
+   * Called exactly once per rendered frame, after the while-tick loop drains
+   * the accumulator. Optional. Use this for per-frame edge-state cleanup
+   * (e.g. clearing keyboard edges, promoting gamepad prev-button state) so
+   * multi-tick frames don't lose edges in ticks 2..N.
+   */
+  onPostTicks?: () => void;
   /** Called exactly once per rendered frame, after ticks. `alpha` in [0, 1) is acc / dt. */
   onRender: (alpha: number) => void;
 }
@@ -50,6 +57,10 @@ export function startLoop(opts: LoopOptions): { stop: () => void } {
     while (acc >= dt) {
       opts.onTick(dt);
       acc -= dt;
+    }
+
+    if (opts.onPostTicks !== undefined) {
+      opts.onPostTicks();
     }
 
     const alpha = acc / dt;

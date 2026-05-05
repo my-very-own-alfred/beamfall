@@ -431,6 +431,12 @@ async function main(): Promise<void> {
         }
       }
 
+    },
+    onPostTicks: (): void => {
+      // Item #1: clear edge-triggered keyboard state ONCE per rendered frame,
+      // after every tick that fits in the accumulator has consumed edges.
+      // Doing this inside onTick would lose edges on the 2nd..Nth tick of a
+      // multi-tick frame (e.g. after a tab-pause when the accumulator drains).
       keyboard.clearEdges();
     },
     onRender: (alpha: number): void => {
