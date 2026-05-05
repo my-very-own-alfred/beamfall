@@ -45,14 +45,20 @@ export function buildSnapshots(
         axisY: down - up,
         activate: keyboard.wasPressed(k.activate),
         power: keyboard.wasPressed(k.power),
+        disconnected: false,
       });
     } else {
+      // Item #7: when the bound gamepad is disconnected we still emit a
+      // snapshot so the sim's shape stays deterministic, but with zeroed
+      // axes / buttons and `disconnected: true` so a future PR can pause.
       const idx = binding.index;
+      const connected = gamepad.isConnected(idx);
       out.push({
-        axisX: gamepad.axis(idx, GAMEPAD_AXIS_LX),
-        axisY: gamepad.axis(idx, GAMEPAD_AXIS_LY),
-        activate: gamepad.buttonPressed(idx, GAMEPAD_BUTTON_A),
-        power: gamepad.buttonPressed(idx, GAMEPAD_BUTTON_B),
+        axisX: connected ? gamepad.axis(idx, GAMEPAD_AXIS_LX) : 0,
+        axisY: connected ? gamepad.axis(idx, GAMEPAD_AXIS_LY) : 0,
+        activate: connected ? gamepad.buttonPressed(idx, GAMEPAD_BUTTON_A) : false,
+        power: connected ? gamepad.buttonPressed(idx, GAMEPAD_BUTTON_B) : false,
+        disconnected: !connected,
       });
     }
   }

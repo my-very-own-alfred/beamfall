@@ -30,13 +30,25 @@ export interface InputSnapshot {
   axisY: number; // -1..1
   activate: boolean; // edge-triggered: true on rising edge of activate button
   power: boolean; // edge-triggered: true on rising edge of power button
+  /**
+   * Item #7: true when the binding for this slot is currently orphaned (e.g.
+   * the gamepad was disconnected). Snapshots remain emitted with zeroed axes
+   * so the simulation has a deterministic shape, but consumers (main/world)
+   * can read this flag to decide whether to pause the match. Match-pause is
+   * intentionally NOT handled here — that lives in a future PR.
+   */
+  disconnected: boolean;
 }
 
 export type KeyboardLayout = 'wasd' | 'arrows' | 'ijkl' | 'numpad';
 
 export type PlayerBinding =
   | { kind: 'keyboard'; layout: KeyboardLayout }
-  | { kind: 'gamepad'; index: number };
+  // Item #7: `orphaned` flips to true when the underlying gamepad emits a
+  // `gamepaddisconnected` event. The slot is preserved (so a reconnect at the
+  // same index can re-bind), but snapshots produced from this binding will
+  // carry `disconnected: true`.
+  | { kind: 'gamepad'; index: number; orphaned?: boolean };
 
 // ---------------------------------------------------------------------------
 // Characters (class system inspired by Laser League)

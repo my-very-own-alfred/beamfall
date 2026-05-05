@@ -76,6 +76,9 @@ export function decodeSnapshot(v: number): InputSnapshot {
     axisY: ay / 127,
     activate: (flags & 1) !== 0,
     power: (flags & 2) !== 0,
+    // Item #7: disconnected isn't recorded — replays are always replayed
+    // from a connected source. False is the sim-correct default.
+    disconnected: false,
   };
 }
 
@@ -157,7 +160,7 @@ export function createPlayer(replay: Replay): ReplayPlayer {
         // Ran out — return neutral snapshots so the sim doesn't NaN out.
         const out: InputSnapshot[] = [];
         for (let i = 0; i < slotCount; i++) {
-          out.push({ axisX: 0, axisY: 0, activate: false, power: false });
+          out.push({ axisX: 0, axisY: 0, activate: false, power: false, disconnected: false });
         }
         return out;
       }
