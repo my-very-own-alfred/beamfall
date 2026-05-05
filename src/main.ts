@@ -54,12 +54,29 @@ import type { SfxName } from '@/engine/audio/sfx';
 import { drainEvents } from '@/game/events';
 import type { GameEvent } from '@/game/events';
 import { TICK_HZ } from '@/types';
-import type { InputSnapshot, World } from '@/types';
+import type { Arena, InputSnapshot, World } from '@/types';
 
 type AppState = 'menu' | 'lobby' | 'match' | 'stats' | 'replay';
 
 const VIEW_W = 1280;
 const VIEW_H = 720;
+
+/**
+ * Item #4: recompute and apply layer offsets so the arena is centered in the
+ * viewport. Pure w.r.t. inputs other than the layer x/y mutation. Called at
+ * match start and on every window resize so the arena stays centered when
+ * the canvas is rescaled or arenas of different sizes are loaded.
+ */
+function centerArena(stage: Stage, arena: Arena, viewportW: number, viewportH: number): void {
+  const arenaPxW = arena.cols * arena.cellSize;
+  const arenaPxH = arena.rows * arena.cellSize;
+  const offsetX = (viewportW - arenaPxW) / 2;
+  const offsetY = (viewportH - arenaPxH) / 2;
+  stage.bgLayer.x = offsetX;
+  stage.bgLayer.y = offsetY;
+  stage.glowLayer.x = offsetX;
+  stage.glowLayer.y = offsetY;
+}
 
 const KEY_PAUSE = 'Escape';
 const GAMEPAD_START = 9;
@@ -169,12 +186,7 @@ async function main(): Promise<void> {
   const buildPlaySurface = (w: World): void => {
     const arenaPxW = w.arena.cols * w.arena.cellSize;
     const arenaPxH = w.arena.rows * w.arena.cellSize;
-    const offsetX = (VIEW_W - arenaPxW) / 2;
-    const offsetY = (VIEW_H - arenaPxH) / 2;
-    stage.bgLayer.x = offsetX;
-    stage.bgLayer.y = offsetY;
-    stage.glowLayer.x = offsetX;
-    stage.glowLayer.y = offsetY;
+    centerArena(stage, w.arena, VIEW_W, VIEW_H);
     worldRenderer = createWorldRenderer(stage, arenaPxW, arenaPxH);
     hud = createHud(stage.hudLayer);
   };
@@ -495,11 +507,16 @@ async function main(): Promise<void> {
   }
 
   // --- Resize: keep logical viewport at VIEW_W x VIEW_H, scale via CSS. ----
+  // Item #4: re-center the arena on resize so the playfield stays centered
+  // even if the loaded arena's cell count or cell size changes mid-run.
   const handleResize = (): void => {
     const scale = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H);
     const canvas = stage.app.canvas;
     canvas.style.width = `${VIEW_W * scale}px`;
     canvas.style.height = `${VIEW_H * scale}px`;
+    if (world !== null) {
+      centerArena(stage, world.arena, VIEW_W, VIEW_H);
+    }
   };
   window.addEventListener('resize', handleResize);
   handleResize();
