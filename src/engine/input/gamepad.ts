@@ -26,13 +26,29 @@ export class GamepadSource {
   private connectCbs: ConnectCallback[] = [];
   private disconnectCbs: DisconnectCallback[] = [];
   private attached = false;
+  // Item #5: when paused we skip polling entirely so current/prev stays frozen.
+  private paused = false;
 
   private readonly handleConnected = (e: GamepadEvent): void => {
     for (const cb of this.connectCbs) cb(e.gamepad.index, e.gamepad.id);
   };
 
   private readonly handleDisconnected = (e: GamepadEvent): void => {
-    for (const cb of this.disconnectCbs) cb(e.gamepad.index);
+    // Item #7: clear internal state for the slot so a future reconnect at
+    // the same index doesn't inherit stale axes/buttons.
+    const idx = e.gamepad.index;
+    const slot = this.current[idx];
+    if (slot) {
+      slot.connected = false;
+      slot.id = '';
+      for (let a = 0; a < slot.axes.length; a++) slot.axes[a] = 0;
+      for (let b = 0; b < slot.buttons.length; b++) slot.buttons[b] = false;
+    }
+    const prev = this.prevButtons[idx];
+    if (prev) {
+      for (let b = 0; b < prev.length; b++) prev[b] = false;
+    }
+    for (const cb of this.disconnectCbs) cb(idx);
   };
 
   /** Attach `gamepadconnected` / `gamepaddisconnected` listeners. Idempotent. */
@@ -53,6 +69,10 @@ export class GamepadSource {
 
   /** Snapshot current gamepad state. Must be called once per frame before reads. */
   poll(): void {
+    // Item #5: when paused (window blurred / tab hidden) we want state to
+    // stay frozen and produce no edges. Skip polling outright.
+    if (this.paused) return;
+
     // Promote current.buttons to prevButtons for edge detection on this frame.
     this.prevButtons = this.current.map((p) => p.buttons.slice());
 
@@ -141,5 +161,27 @@ export class GamepadSource {
   /** Register a callback fired when a gamepad is disconnected. */
   onDisconnect(cb: (index: number) => void): void {
     this.disconnectCbs.push(cb);
+  }
+
+  /**
+   * Item #5: freeze input snapshotting. While paused, {@link poll} is a no-op
+   * so neither held nor edge state changes. Idempotent.
+   */
+  pause(): void {
+    this.paused = true;
+  }
+
+  /**
+   * Item #5: resume polling after a pause. Forces "all released" on current
+   * and prev so the first post-resume `poll()` cannot synthesize a fake
+   * rising edge from a button that was held while the tab was inactive.
+   * Idempotent.
+   */
+  resume(): void {
+    this.paused = false;
+    for (const pad of this.current) {
+      for (let b = 0; b < pad.buttons.length; b++) pad.buttons[b] = false;
+    }
+    this.prevButtons = this.current.map((p) => p.buttons.slice());
   }
 }

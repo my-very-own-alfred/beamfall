@@ -33,11 +33,24 @@ export class KeyboardSource {
     this.down.delete(e.code);
   };
 
-  /** Add the keydown/keyup listeners to `window`. Idempotent. */
+  // Item #5: when the window loses focus we miss keyup events for any
+  // currently-held keys. Same when the tab is hidden. Treat both as
+  // "release everything" to avoid stuck-key states on return.
+  private readonly handleBlur = (): void => {
+    this.releaseAll();
+  };
+
+  private readonly handleVisibility = (): void => {
+    if (document.hidden) this.releaseAll();
+  };
+
+  /** Add the keydown/keyup/blur/visibility listeners to `window`. Idempotent. */
   attach(): void {
     if (this.attached) return;
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('keyup', this.handleKeyUp);
+    window.addEventListener('blur', this.handleBlur);
+    document.addEventListener('visibilitychange', this.handleVisibility);
     this.attached = true;
   }
 
@@ -46,6 +59,8 @@ export class KeyboardSource {
     if (!this.attached) return;
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
+    window.removeEventListener('blur', this.handleBlur);
+    document.removeEventListener('visibilitychange', this.handleVisibility);
     this.attached = false;
     this.down.clear();
     this.justPressed.clear();
@@ -64,5 +79,23 @@ export class KeyboardSource {
   /** Clear edge-triggered state. Call once per frame after building snapshots. */
   clearEdges(): void {
     this.justPressed.clear();
+  }
+
+  /**
+   * Drop all held/just-pressed state. Used on focus loss to avoid stuck keys
+   * when keyup never fires (e.g. user alt-tabs while holding W).
+   */
+  releaseAll(): void {
+    this.down.clear();
+    this.justPressed.clear();
+  }
+
+  /**
+   * Item #5: public alias of {@link releaseAll}. Exposed for integrators
+   * (e.g. main.ts window-blur hook, scene transitions) that want a stable
+   * documented name for "drop all input state right now".
+   */
+  flush(): void {
+    this.releaseAll();
   }
 }

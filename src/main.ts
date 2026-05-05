@@ -95,6 +95,25 @@ async function main(): Promise<void> {
   const gamepad = new GamepadSource();
   gamepad.attach();
 
+  // Item #5: when the window loses focus we miss keyup/button-up events for
+  // anything currently held. Treat focus-loss as "release everything" so we
+  // don't get stuck-key states on return. Mirror for visibility change.
+  window.addEventListener('blur', () => {
+    keyboard.flush();
+    gamepad.pause();
+  });
+  window.addEventListener('focus', () => {
+    gamepad.resume();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      keyboard.flush();
+      gamepad.pause();
+    } else {
+      gamepad.resume();
+    }
+  });
+
   // --- Audio bootstrap -----------------------------------------------------
   // Browser autoplay policy requires the AudioContext be created from a user
   // gesture. Hook the first key/click to lazy-init; afterwards a no-op.
